@@ -1,0 +1,5 @@
+libavm-retom (1.0.0) unstable; urgency=low
+
+  [+] Initial release: connect/disconnect, enable/disable, apply/off/safety_stop, read_input_contacts/set_out_contact over FTDI VCP (RETOM-51)
+
+ -- AVM-Energo <support@avmenergo.ru>  Wed, 19 Aug 2026 00:00:00 +0300

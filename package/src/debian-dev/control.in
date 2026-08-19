@@ -1,0 +1,9 @@
+Source: libavm-retom-dev
+Priority: optional
+Maintainer: AVM-Energo <support@avmenergo.ru>
+Section: devel
+
+Package: libavm-retom-dev
+Description: RETOM-51 test-bench driver library for AVM-Energo projects development files
+Architecture: amd64
+Depends: ${shlibs:Depends}

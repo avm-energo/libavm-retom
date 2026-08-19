@@ -1,0 +1,40 @@
+__pycache__/
+*.pyc
+.venv/
+
+# C++ build directories (anchored to repo root - Windows Git matches
+# .gitignore patterns case-insensitively, and an unanchored "build/"
+# would also swallow package/src/rpm/rpmbuild/BUILD/)
+/build/
+/build-*/
+
+# C++ objects and libs
+*.slo
+*.lo
+*.o
+*.obj
+*.a
+*.la
+*.lai
+*.so
+*.dll
+*.dylib
+*.lib
+*.exp
+*.pdb
+
+# Qt-es
+**/.qmake.cache
+**/.qmake.stash
+*.pro.user
+*.pro.user.*
+*.moc
+moc_*.cpp
+qrc_*.cpp
+ui_*.h
+
+# MSVS
+**/.vs
+*.vcxproj.filters
+*.vcxproj.user
+CMakeLists.txt.user*

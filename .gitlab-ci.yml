@@ -1,0 +1,53 @@
+stages:
+  - build
+
+# Uses the pre-baked images from the dockers repo (dockers/gitlab-ci/) -
+# see that repo for what's installed in each (Qt6 base+svg, git,
+# ca-certificates, and for the mingw job, Qt's qt.toolchain.cmake path is
+# already set as $QT_MINGW_TOOLCHAIN by that image).
+#
+# NOTE: like libavm-emon and unlike libavm-gen, this project has no external
+# AVM-Energo dependencies pulled in via FetchContent - just Qt (Core +
+# SerialPort). UNTESTED whether qt6-serialport (or the mingw64 equivalent)
+# is actually present in these images - their own comment only lists "Qt6
+# base+svg", not SerialPort specifically. If find_package(Qt6 ...
+# SerialPort) fails here, that's the first thing to check.
+
+build:linux-debian:
+  stage: build
+  image: vm-debian:5000/debian-qt6:latest
+  script:
+    - cmake -B build -S . -DSYSTEM_NAME=linux
+    - cmake --build build -j"$(nproc)"
+
+build:linux-fedora:
+  stage: build
+  image: vm-debian:5000/fedora-qt6:latest
+  script:
+    - cmake -B build -S . -DSYSTEM_NAME=linux
+    - cmake --build build -j"$(nproc)"
+
+# Windows Qt build, cross-compiled via Fedora's MinGW SIG packages.
+# UNTESTED - Debian has no mingw-w64 cross build of Qt6, so unlike
+# libavm-hidapi's windows-mingw job this needed a Fedora-based image,
+# using Fedora's mingw64-qt6-* packages (prebuilt Qt6 for the win64
+# target) plus the native qt6-qtbase-devel package for the moc/uic/rcc
+# host tools that AUTOMOC/AUTOUIC/AUTORCC need to run natively during the
+# build. Uses Qt's own qt.toolchain.cmake (shipped inside
+# mingw64-qt6-qtbase) instead of a hand-rolled toolchain file, since it
+# already knows how to locate the matching host tools. This library's own
+# hardware validation so far has been on Windows/MSVC (live_smoke_test.exe
+# against a real РЕТОМ-51, see PLAN.md Phase E.7/F.10), not this MinGW
+# path - flagging that gap here too.
+build:windows-mingw:
+  stage: build
+  image: vm-debian:5000/fedora-mingw-qt6:latest
+  script:
+    # Static
+    - cmake -B build-static -S . -DSYSTEM_NAME=windows
+        -DCMAKE_TOOLCHAIN_FILE="$QT_MINGW_TOOLCHAIN" -DQT_HOST_PATH=/usr
+    - cmake --build build-static -j"$(nproc)"
+    # Shared (exercises the dllexport path)
+    - cmake -B build-shared -S . -DSYSTEM_NAME=windows -DBUILD_SHARED_LIBS=ON
+        -DCMAKE_TOOLCHAIN_FILE="$QT_MINGW_TOOLCHAIN" -DQT_HOST_PATH=/usr
+    - cmake --build build-shared -j"$(nproc)"
