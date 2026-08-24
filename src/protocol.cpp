@@ -68,9 +68,9 @@ std::array<double, 13> buildSignalWords(
 {
     std::array<double, 13> out {};
     int idx = 0;
-    for (const double p : u)
+    for (int count = 0; count < 3; ++count)
     {
-        out[idx++] = p;
+        out[idx++] = u[count];
         out[idx++] = 0.0; // U phases are set to 0 degrees
     }
     for (int count = 0; count < 3; ++count)

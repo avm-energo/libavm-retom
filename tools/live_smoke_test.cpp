@@ -20,7 +20,8 @@ int main(int argc, char **argv)
     // Явный COM10 -- на стенде теперь два FTDI-устройства (docs/RE_LOG.md 2026-08-19), поиск по
     // vid/pid неоднозначен; COM10 -- подтверждённый РЕТОМ.
     retom::RetomConfig cfg;
-    retom::RetomDriver driver(cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, "COM10"));
+    retom::RetomDriver driver(
+        cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, "/dev/ttyUSB0"));
     try
     {
         std::printf("connect(enable=true) ...\n");
@@ -29,6 +30,8 @@ int main(int argc, char **argv)
 
         retom::RetomSignalSet sigSet;
         sigSet.u = { ua, 0, 0 };
+        sigSet.i = { 1, 0, 0 };
+        sigSet.phi = { 0, 0, 0 };
         sigSet.freq = 50.0;
 
         std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds ...\n", ua, holdSeconds);
