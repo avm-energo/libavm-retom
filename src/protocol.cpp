@@ -5,40 +5,40 @@
 
 #include <cstring>
 
-namespace retom::protocol {
+namespace retom::protocol
+{
 
-namespace {
+namespace
+{
 
-constexpr std::array<const char *, 3> kPhases = {"A", "B", "C"};
+    void putFloat(QByteArray &buf, int offset, double value)
+    {
+        const float v = static_cast<float>(value);
+        std::memcpy(buf.data() + offset, &v, sizeof(float));
+    }
 
-double lookup(const std::map<QString, double> &m, const QString &key) {
-    auto it = m.find(key);
-    return it != m.end() ? it->second : 0.0;
-}
+    void putU32(QByteArray &buf, int offset, quint32 value)
+    {
+        std::memcpy(buf.data() + offset, &value, sizeof(quint32));
+    }
 
-void putFloat(QByteArray &buf, int offset, double value) {
-    const float v = static_cast<float>(value);
-    std::memcpy(buf.data() + offset, &v, sizeof(float));
-}
+} // namespace
 
-void putU32(QByteArray &buf, int offset, quint32 value) {
-    std::memcpy(buf.data() + offset, &value, sizeof(quint32));
-}
-
-}  // namespace
-
-QByteArray encodeSineSet(const std::array<double, 12> &ampsPhases) {
+QByteArray encodeSineSet(const std::array<double, 12> &ampsPhases)
+{
     // 12 полей x 4Б (шаг 4, плотная упаковка) + 48-байтный неизменно нулевой хвост (48+48=96) --
     // раскладка подтверждена живыми захватами, см. docs/RE_LOG.md.
     QByteArray buf(0x60, '\0');
-    for (int k = 0; k < 12; ++k) {
-        const bool isAmplitude = (k % 2 == 0);  // Ua,Ub,Uc,Ia,Ib,Ic на чётных индексах
+    for (int k = 0; k < 12; ++k)
+    {
+        const bool isAmplitude = (k % 2 == 0); // Ua,Ub,Uc,Ia,Ib,Ic на чётных индексах
         putFloat(buf, 4 * k, isAmplitude ? ampsPhases[k] * kSqrt2 : ampsPhases[k]);
     }
     return framing::packFrame(CMD_SINE_ALL, buf);
 }
 
-QByteArray encodeFrequency(double freqHz, std::optional<quint32> mode, std::array<quint8, 3> flags) {
+QByteArray encodeFrequency(double freqHz, std::optional<quint32> mode, std::array<quint8, 3> flags)
+{
     QByteArray buf(0xB, '\0');
     const quint32 dw0 = mode ? *mode : static_cast<quint32>(10000.0 / freqHz);
     putU32(buf, 0, dw0);
@@ -49,83 +49,99 @@ QByteArray encodeFrequency(double freqHz, std::optional<quint32> mode, std::arra
     return framing::packFrame(CMD_FREQ, buf);
 }
 
-std::vector<QByteArray> encodeOut(const std::array<double, 13> &signalWords13) {
-    std::array<double, 12> ampsPhases{};
+std::vector<QByteArray> encodeOut(const std::array<double, 13> &signalWords13)
+{
+    std::array<double, 12> ampsPhases {};
     std::copy(signalWords13.begin(), signalWords13.begin() + 12, ampsPhases.begin());
-    return {encodeSineSet(ampsPhases), encodeFrequency(signalWords13[12])};
+    return { encodeSineSet(ampsPhases), encodeFrequency(signalWords13[12]) };
 }
 
-std::vector<QByteArray> encodeChannelsReset() {
-    std::array<double, 13> zeros{};
+std::vector<QByteArray> encodeChannelsReset()
+{
+    std::array<double, 13> zeros {};
     zeros[12] = 50.0;
     return encodeOut(zeros);
 }
 
-std::array<double, 13> buildSignalWords(const std::map<QString, double> &u,
-                                          const std::map<QString, double> &i,
-                                          const std::map<QString, double> &phi, double freq) {
-    std::array<double, 13> out{};
+std::array<double, 13> buildSignalWords(
+    const std::array<double, 3> &u, const std::array<double, 3> &i, const std::array<double, 3> &phi, const double freq)
+{
+    std::array<double, 13> out {};
     int idx = 0;
-    for (const char *p : kPhases) {
-        out[idx++] = lookup(u, QString::fromLatin1(p));
-        out[idx++] = lookup(phi, QString::fromLatin1(p));
+    for (const double p : u)
+    {
+        out[idx++] = p;
+        out[idx++] = 0.0; // U phases are set to 0 degrees
     }
-    for (const char *p : kPhases) {
-        out[idx++] = lookup(i, QString::fromLatin1(p));
-        out[idx++] = lookup(phi, QString::fromLatin1(p));
+    for (int count = 0; count < 3; ++count)
+    {
+        out[idx++] = i[count];
+        out[idx++] = phi[count];
     }
     out[12] = freq;
     return out;
 }
 
-QByteArray encodeLock(bool openDevice) {
+QByteArray encodeLock(bool openDevice)
+{
     QByteArray data("Lock", 4);
     data.append(static_cast<char>(openDevice ? 0 : 1));
     return framing::packFrame(CMD_LOCK, data);
 }
 
-std::vector<QByteArray> encodeConnectBootstrap() {
+std::vector<QByteArray> encodeConnectBootstrap()
+{
     std::vector<QByteArray> out;
     out.reserve(bootstrap::kConnectBootstrap.size());
-    for (const auto &[num, data] : bootstrap::kConnectBootstrap) {
+    for (const auto &[num, data] : bootstrap::kConnectBootstrap)
+    {
         out.push_back(framing::packFrame(num, data));
     }
     return out;
 }
 
-std::vector<QByteArray> encodeEnableBootstrap() {
+std::vector<QByteArray> encodeEnableBootstrap()
+{
     std::vector<QByteArray> out;
     out.reserve(bootstrap::kEnableBootstrap.size());
-    for (const auto &[num, data] : bootstrap::kEnableBootstrap) {
+    for (const auto &[num, data] : bootstrap::kEnableBootstrap)
+    {
         out.push_back(framing::packFrame(num, data));
     }
     return out;
 }
 
-std::vector<std::pair<quint16, QByteArray>> encodeEnableBootstrapTagged() {
+std::vector<std::pair<quint16, QByteArray>> encodeEnableBootstrapTagged()
+{
     std::vector<std::pair<quint16, QByteArray>> out;
     out.reserve(bootstrap::kEnableBootstrap.size());
-    for (const auto &[num, data] : bootstrap::kEnableBootstrap) {
+    for (const auto &[num, data] : bootstrap::kEnableBootstrap)
+    {
         out.emplace_back(num, framing::packFrame(num, data));
     }
     return out;
 }
 
-std::vector<QByteArray> encodeOutPreamble() {
+std::vector<QByteArray> encodeOutPreamble()
+{
     std::vector<QByteArray> out;
     out.reserve(bootstrap::kOutPreamble.size());
-    for (const auto &[num, data] : bootstrap::kOutPreamble) {
+    for (const auto &[num, data] : bootstrap::kOutPreamble)
+    {
         out.push_back(framing::packFrame(num, data));
     }
     return out;
 }
 
-QByteArray encodeReadInputContacts() {
+QByteArray encodeReadInputContacts()
+{
     return framing::packFrame(CMD_READ_INPUT_CONTACTS, {});
 }
 
-quint32 decodeInputContacts(const QByteArray &payload) {
-    if (payload.size() != 4) {
+quint32 decodeInputContacts(const QByteArray &payload)
+{
+    if (payload.size() != 4)
+    {
         throw framing::FramingError("ожидалось 4 байта ответа ReadInputContacts");
     }
     quint32 value = 0;
@@ -133,8 +149,9 @@ quint32 decodeInputContacts(const QByteArray &payload) {
     return value;
 }
 
-std::vector<QByteArray> encodeSetOutContact(bool closed, int number) {
-    Q_UNUSED(number);  // подтверждено живым захватом ТОЛЬКО для number=0, см. protocol.py
+std::vector<QByteArray> encodeSetOutContact(bool closed, int number)
+{
+    Q_UNUSED(number); // подтверждено живым захватом ТОЛЬКО для number=0, см. protocol.py
     const quint8 flag = closed ? 1 : 0;
 
     QByteArray mini("MINI", 4);
@@ -149,12 +166,12 @@ std::vector<QByteArray> encodeSetOutContact(bool closed, int number) {
     tail.append(static_cast<char>(0));
     tail.append(static_cast<char>(0));
 
-    return {framing::packFrame(CMD_SET_OUT_CONTACT_MINI, mini),
-            framing::packFrame(CMD_SET_OUT_CONTACT_880, tail)};
+    return { framing::packFrame(CMD_SET_OUT_CONTACT_MINI, mini), framing::packFrame(CMD_SET_OUT_CONTACT_880, tail) };
 }
 
-QByteArray encodeDisable() {
+QByteArray encodeDisable()
+{
     return framing::packFrame(CMD_DISABLE, {});
 }
 
-}  // namespace retom::protocol
+} // namespace retom::protocol

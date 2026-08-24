@@ -7,11 +7,11 @@
 
 #include <QCoreApplication>
 #include <QThread>
-
 #include <cstdio>
 #include <exception>
 
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
     QCoreApplication app(argc, argv);
 
     const int holdSeconds = argc > 1 ? std::atoi(argv[1]) : 8;
@@ -20,15 +20,15 @@ int main(int argc, char **argv) {
     // Явный COM10 -- на стенде теперь два FTDI-устройства (docs/RE_LOG.md 2026-08-19), поиск по
     // vid/pid неоднозначен; COM10 -- подтверждённый РЕТОМ.
     retom::RetomConfig cfg;
-    retom::RetomDriver driver(cfg, std::make_unique<retom::FtdiTransport>(
-        retom::kRetomVid, retom::kRetomPid, "COM10"));
-    try {
+    retom::RetomDriver driver(cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, "COM10"));
+    try
+    {
         std::printf("connect(enable=true) ...\n");
         driver.connect(true);
         std::printf("connected+enabled OK\n");
 
         retom::RetomSignalSet sigSet;
-        sigSet.u["A"] = ua;
+        sigSet.u = { ua, 0, 0 };
         sigSet.freq = 50.0;
 
         std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds ...\n", ua, holdSeconds);
@@ -49,12 +49,16 @@ int main(int argc, char **argv) {
 
         std::printf("\n+++ LIVE C++ SMOKE TEST OK, NO RTDI +++\n");
         return 0;
-    } catch (const std::exception &e) {
+    } catch (const std::exception &e)
+    {
         std::fprintf(stderr, "\nERROR: %s\n", e.what());
-        if (driver.isConnected()) {
-            try {
+        if (driver.isConnected())
+        {
+            try
+            {
                 driver.disconnect();
-            } catch (...) {
+            } catch (...)
+            {
             }
         }
         return 1;

@@ -5,7 +5,6 @@
 #include <QByteArray>
 #include <QString>
 #include <array>
-#include <map>
 #include <optional>
 #include <utility>
 #include <vector>
@@ -13,23 +12,24 @@
 // Прикладной протокол RTDI<->РЕТОМ -- порт src/linretom/protocol.py (источник истины и
 // обоснование раскладки полей/номеров команд -- см. docs/PROTOCOL.md, docs/RE_LOG.md). Экспортируется
 // (не только driver.h/transport.h), т.к. tests/ обращаются к этим функциям напрямую -- см. framing.h.
-namespace retom::protocol {
+namespace retom::protocol
+{
 
-constexpr quint16 CMD_SINE_ALL = 0x815;   // 12xFN: все 6 каналов {ампл, фаза}
-constexpr quint16 CMD_SINE_U = 0x816;     // 6xFN: напряжения U a/b/c {ампл, фаза}
-constexpr quint16 CMD_SINE_I = 0x817;     // 6xFN: токи I a/b/c {ампл, фаза}
-constexpr quint16 CMD_FREQ = 0x818;       // DW@0, FN@4=Гц, BT@8/9/a
+constexpr quint16 CMD_SINE_ALL = 0x815; // 12xFN: все 6 каналов {ампл, фаза}
+constexpr quint16 CMD_SINE_U = 0x816;   // 6xFN: напряжения U a/b/c {ампл, фаза}
+constexpr quint16 CMD_SINE_I = 0x817;   // 6xFN: токи I a/b/c {ампл, фаза}
+constexpr quint16 CMD_FREQ = 0x818;     // DW@0, FN@4=Гц, BT@8/9/a
 constexpr quint32 kMaskAllChannels = 0x770077;
 
-constexpr quint16 CMD_LOCK = 0x00F;                  // захват/освобождение прибора
-constexpr quint16 CMD_LINK_PROBE = 0x000;            // проба канала сразу после Lock
-constexpr quint16 CMD_LINK_ACK = 0x003;              // пустой кадр сразу после пробы
+constexpr quint16 CMD_LOCK = 0x00F;       // захват/освобождение прибора
+constexpr quint16 CMD_LINK_PROBE = 0x000; // проба канала сразу после Lock
+constexpr quint16 CMD_LINK_ACK = 0x003;   // пустой кадр сразу после пробы
 constexpr quint16 CMD_READ_INPUT_CONTACTS = 0x902;
 constexpr quint16 CMD_SET_OUT_CONTACT_MINI = 0x806;
 constexpr quint16 CMD_SET_OUT_CONTACT_880 = 0x880;
 constexpr quint16 CMD_DISABLE = 0x812;
 
-constexpr double kSqrt2 = 1.4142135623730951;  // RMS -> амплитуда (пик)
+constexpr double kSqrt2 = 1.4142135623730951; // RMS -> амплитуда (пик)
 
 // Кадр 0x815: amps_phases = 12 значений Ua,phi_a, Ub,phi_b, Uc,phi_c, Ia,phi_a, Ib,phi_b, Ic,phi_c
 // (без частоты). Раскладка подтверждена живыми захватами -- см. docs/RE_LOG.md.
@@ -37,17 +37,16 @@ AVM_RETOM_EXPORT QByteArray encodeSineSet(const std::array<double, 12> &ampsPhas
 
 // Кадр 0x818: DW@0 = floor(10000/freqHz) по умолчанию (переопределяется через mode),
 // FN@4 = freqHz без масштаба, BT@8/9/0xA = flags (по умолчанию статические 1,1,0x11).
-AVM_RETOM_EXPORT QByteArray encodeFrequency(double freqHz, std::optional<quint32> mode = std::nullopt,
-                            std::array<quint8, 3> flags = {1, 1, 0x11});
+AVM_RETOM_EXPORT QByteArray encodeFrequency(
+    double freqHz, std::optional<quint32> mode = std::nullopt, std::array<quint8, 3> flags = { 1, 1, 0x11 });
 
 // signalWords13 = [Ua,phi_a, Ub,phi_b, Uc,phi_c, Ia,phi_a, Ib,phi_b, Ic,phi_c, f]
 AVM_RETOM_EXPORT std::vector<QByteArray> encodeOut(const std::array<double, 13> &signalWords13);
 AVM_RETOM_EXPORT std::vector<QByteArray> encodeChannelsReset();
 
 // u/i/phi -- значения по фазам "A"/"B"/"C" (отсутствующая фаза = 0.0). Ток -- в А на выходе РЕТОМ.
-AVM_RETOM_EXPORT std::array<double, 13> buildSignalWords(const std::map<QString, double> &u,
-                                          const std::map<QString, double> &i,
-                                          const std::map<QString, double> &phi, double freq);
+AVM_RETOM_EXPORT std::array<double, 13> buildSignalWords(const std::array<double, 3> &u, const std::array<double, 3> &i,
+    const std::array<double, 3> &phi, const double freq);
 
 AVM_RETOM_EXPORT QByteArray encodeLock(bool openDevice);
 
@@ -71,4 +70,4 @@ AVM_RETOM_EXPORT std::vector<QByteArray> encodeSetOutContact(bool closed, int nu
 
 AVM_RETOM_EXPORT QByteArray encodeDisable();
 
-}  // namespace retom::protocol
+} // namespace retom::protocol

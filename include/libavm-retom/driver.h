@@ -3,8 +3,6 @@
 #include "libavm-retom/retom_export.h"
 #include "libavm-retom/transport.h"
 
-#include <QString>
-#include <map>
 #include <memory>
 #include <stdexcept>
 #include <utility>
@@ -13,47 +11,58 @@
 // ограничения и обоснования см. там же и в docs/RE_LOG.md). Масштаб -- то же подмножество, что
 // подтверждено живыми USB-захватами: connect/disconnect, enable/disable, apply/off/safety_stop,
 // read_input_contacts, set_out_contact. server_info() не реализован (номер команды не подтверждён).
-namespace retom {
+namespace retom
+{
 
-struct AVM_RETOM_EXPORT RetomConfig {
+struct AVM_RETOM_EXPORT RetomConfig
+{
     QString retomType = QStringLiteral("RetomType_51");
-    double maxU = 130.0;      // предел напряжения, В (проверяется на этой стороне, не на приборе)
-    double maxI = 2.0;        // предел тока, А (на выходе РЕТОМ)
-    double timeoutS = 1.0;    // таймаут ожидания ответа на один кадр
-    double currentRatio = 100.0;  // трансформатор тока стенда: 1 А выхода -> 100 мА на приборе
+    double maxU = 120.0;   // предел напряжения, В (проверяется на этой стороне, не на приборе)
+    double maxI = 20.0;    // предел тока, А (на выходе РЕТОМ)
+    double timeoutS = 1.0; // таймаут ожидания ответа на один кадр
     quint16 vid = kRetomVid;
     quint16 pid = kRetomPid;
 };
 
 // Набор U/I/phi/f по фазам "A"/"B"/"C" -- отсутствующая фаза трактуется как 0.0, как в apply().
-struct AVM_RETOM_EXPORT RetomSignalSet {
-    std::map<QString, double> u;
-    std::map<QString, double> i;
-    std::map<QString, double> phi;
-    double freq = 50.0;
+struct AVM_RETOM_EXPORT RetomSignalSet
+{
+    std::array<double, 3> u;
+    std::array<double, 3> i;
+    std::array<double, 3> phi;
+    double freq;
 };
 
-class AVM_RETOM_EXPORT RetomError : public std::runtime_error {
+class AVM_RETOM_EXPORT RetomError : public std::runtime_error
+{
 public:
     using std::runtime_error::runtime_error;
 };
 
-class AVM_RETOM_EXPORT RetomNotConnected : public RetomError {
+class AVM_RETOM_EXPORT RetomNotConnected : public RetomError
+{
 public:
-    RetomNotConnected() : RetomError("Не подключён (вызовите connect()).") {}
+    RetomNotConnected() : RetomError("Не подключён (вызовите connect()).")
+    {
+    }
 };
 
-class AVM_RETOM_EXPORT RetomNotEnabled : public RetomError {
+class AVM_RETOM_EXPORT RetomNotEnabled : public RetomError
+{
 public:
-    RetomNotEnabled() : RetomError("Аналоговая выдача не разрешена (вызовите enable()).") {}
+    RetomNotEnabled() : RetomError("Аналоговая выдача не разрешена (вызовите enable()).")
+    {
+    }
 };
 
-class AVM_RETOM_EXPORT RetomProtocolError : public RetomError {
+class AVM_RETOM_EXPORT RetomProtocolError : public RetomError
+{
 public:
     using RetomError::RetomError;
 };
 
-class AVM_RETOM_EXPORT RetomDriver {
+class AVM_RETOM_EXPORT RetomDriver
+{
 public:
     // transport == nullptr -> создаётся настоящий FtdiTransport(cfg.vid, cfg.pid). Передача
     // своей реализации ITransport (например, в тестах) не трогает живое железо.
@@ -72,8 +81,14 @@ public:
     quint32 readInputContacts();
     void setOutContact(int number, bool closed);
 
-    bool isConnected() const { return connected_; }
-    bool isEnabled() const { return enabled_; }
+    bool isConnected() const
+    {
+        return connected_;
+    }
+    bool isEnabled() const
+    {
+        return enabled_;
+    }
 
 private:
     std::pair<quint16, QByteArray> transact(const QByteArray &frame, double timeoutS = -1.0);
@@ -87,4 +102,4 @@ private:
     bool enabled_ = false;
 };
 
-}  // namespace retom
+} // namespace retom
