@@ -13,13 +13,29 @@
 
 namespace
 {
+// Общий для процесса таймер отсчёта для RETOM_DEBUG -- стартует лениво при первом
+// debug-выводе, чтобы TX/RX строки на обеих платформах можно было сравнить по РЕАЛЬНЫМ
+// интервалам между кадрами (2026-08-25 -- содержимое кадров идентично Windows/Linux, дальше
+// проверять можно только тайминг).
+double debugElapsedMs()
+{
+    static QElapsedTimer timer;
+    static bool started = false;
+    if (!started)
+    {
+        timer.start();
+        started = true;
+    }
+    return timer.nsecsElapsed() / 1e6;
+}
+
 // RETOM_DEBUG=1 -- см. комментарий у transact(). Отдельная функция для fire-and-forget записей
 // (Lock/probe), которые идут в обход transact() и не ждут ответа.
 void debugTxRaw(const QByteArray &frame)
 {
     if (std::getenv("RETOM_DEBUG"))
     {
-        std::fprintf(stderr, "TX(no-wait) %s\n", frame.toHex(' ').constData());
+        std::fprintf(stderr, "[%9.3f] TX(no-wait) %s\n", debugElapsedMs(), frame.toHex(' ').constData());
     }
 }
 } // namespace
@@ -353,7 +369,7 @@ std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, do
         {
             if (debug)
             {
-                std::fprintf(stderr, "TX %s\n", frame.toHex(' ').constData());
+                std::fprintf(stderr, "[%9.3f] TX %s\n", debugElapsedMs(), frame.toHex(' ').constData());
             }
             transport_->write(frame);
             const double timeout = timeoutS < 0.0 ? cfg_.timeoutS : timeoutS;
@@ -386,7 +402,8 @@ std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, do
                     const auto result = framing::unpackFrame(buf.mid(start, end - start + 1));
                     if (debug)
                     {
-                        std::fprintf(stderr, "RX num=%#x payload=%s\n", result.first, result.second.toHex(' ').constData());
+                        std::fprintf(stderr, "[%9.3f] RX num=%#x payload=%s\n", debugElapsedMs(), result.first,
+                            result.second.toHex(' ').constData());
                     }
                     return result;
                 } catch (const framing::FramingError &)
@@ -396,7 +413,7 @@ std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, do
             }
             if (debug)
             {
-                std::fprintf(stderr, "RX TIMEOUT\n");
+                std::fprintf(stderr, "[%9.3f] RX TIMEOUT\n", debugElapsedMs());
             }
             throw RetomProtocolError(
                 QString("нет валидного ответа от прибора за %1 с").arg(timeout, 0, 'f', 1).toStdString());
