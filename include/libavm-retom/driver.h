@@ -107,6 +107,17 @@ public:
     {
         return enabled_;
     }
+    // Клиентское отслеживание, НЕ живой опрос прибора -- true после apply(), false после
+    // off()/safetyStop()/disconnect(). Протокол РЕТОМ-51 не даёт способа спросить у самого прибора
+    // текущее состояние аналогового выхода (проверено по полному каталогу методов RTLink.dll,
+    // docs/BINARY_RECON.md, и IAnalogOutputs, docs/API_SPEC.md -- там тоже только локальный
+    // геттер/сеттер на объекте-конструкторе сигнала, не живой запрос к железу; RTDI, похоже, сам
+    // работает так же). Если внешний код изменит выход в обход этого экземпляра RetomDriver, этот
+    // флаг не узнает.
+    bool isOutputActive() const
+    {
+        return outputActive_;
+    }
 
 private:
     std::pair<quint16, QByteArray> transact(const QByteArray &frame, double timeoutS = -1.0);
@@ -138,6 +149,7 @@ private:
     std::unique_ptr<ITransport> transport_;
     bool connected_ = false;
     bool enabled_ = false;
+    bool outputActive_ = false;
 
     QThread ioThread_;
     QObject *ioContext_ = nullptr; // живёт на ioThread_, см. комментарий выше

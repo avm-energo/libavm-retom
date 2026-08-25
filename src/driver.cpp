@@ -138,6 +138,7 @@ void RetomDriver::disconnect()
             self->runOnIoThread([self = self] { self->transport_->close(); });
             self->connected_ = false;
             self->enabled_ = false;
+            self->outputActive_ = false;
         }
     } cleanup { this };
 
@@ -215,12 +216,14 @@ void RetomDriver::apply(const RetomSignalSet &signalSet)
     const auto words = protocol::buildSignalWords(signalSet.u, signalSet.i, signalSet.phi, signalSet.freq);
     sendOut(words);
     startKeepAlive();
+    outputActive_ = true;
 }
 
 void RetomDriver::off()
 {
     requireConnected();
     stopKeepAlive();
+    outputActive_ = false;
     std::array<double, 13> zeros {};
     zeros[12] = 50.0;
     sendOut(zeros);

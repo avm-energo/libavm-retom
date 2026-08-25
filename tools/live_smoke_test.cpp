@@ -36,10 +36,12 @@ int main(int argc, char **argv)
 
         std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds ...\n", ua, holdSeconds);
         driver.apply(sigSet); // держит сигнал сама (фоновый keepalive-поток внутри apply())
+        std::printf("isOutputActive() = %s\n", driver.isOutputActive() ? "true" : "false");
         QThread::sleep(static_cast<unsigned long>(holdSeconds));
 
         std::printf("off()\n");
         driver.off();
+        std::printf("isOutputActive() = %s\n", driver.isOutputActive() ? "true" : "false");
 
         std::printf("setOutContact(0, true)\n");
         driver.setOutContact(0, true);
