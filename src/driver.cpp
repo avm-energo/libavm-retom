@@ -259,7 +259,7 @@ void RetomDriver::apply(const RetomSignalSet &signalSet)
         transact(frame);
     }
 
-    const auto words = protocol::buildSignalWords(signalSet.u, signalSet.i, signalSet.phi, signalSet.freq);
+    const auto words = protocol::buildSignalWords(signalSet.u, signalSet.uPhi, signalSet.i, signalSet.phi, signalSet.freq);
     sendOut(words);
     startKeepAlive();
     outputActive_ = true;
