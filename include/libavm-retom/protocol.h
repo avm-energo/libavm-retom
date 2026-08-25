@@ -56,6 +56,7 @@ AVM_RETOM_EXPORT QByteArray encodeLock(bool openDevice);
 AVM_RETOM_EXPORT std::vector<QByteArray> encodeConnectBootstrap();
 
 AVM_RETOM_EXPORT std::vector<QByteArray> encodeEnableBootstrap();
+AVM_RETOM_EXPORT std::vector<QByteArray> encodeEnableCalibration();
 // Как encodeEnableBootstrap(), но с номером команды при каждом кадре -- нужно driver.cpp, чтобы
 // отличить кадры, ожидающие ответа, от повторного Lock (CMD_LOCK) внутри последовательности,
 // который ответа не получает (подтверждено живым тестом 2026-08-18).

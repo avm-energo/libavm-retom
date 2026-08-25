@@ -89,6 +89,54 @@ const std::vector<std::pair<quint16, QByteArray>> kEnableBootstrap = {
     {0x0813, QByteArray::fromHex("05000101")},
 };
 
+// Блок чтения калибровки каналов (0x0824 x8 + 0x0806 "MINI 0x20" x8, повторено дважды) -- снят из
+// живого захвата ВТОРОГО пакета ПО (не RTDI) с ГЕНУИННО холодного старта (2026-08-25, мэйнс-питание
+// снято/подано заново перед захватом, capture начат ДО первого Lock). Найден и в этом же положении
+// (внутри собственного Enable()-эквивалента второй программы) в более раннем "тёплом" захвате
+// 2026-08-19 -- т.е. это не случайность одной сессии. Гипотеза: реальная аппаратная самокалибровка
+// каналов, которая должна отработать РАЗ ЗА СЕССИЮ ПИТАНИЯ прибора -- объясняет находку 2026-08-25:
+// наш ENABLE_BOOTSTRAP (снят только с RTDI, без этого блока) давал apply() без напряжения на выходе,
+// ПОКА второй пакет ПО не "прогревал" прибор первым в той же сессии питания -- после чего наш же
+// драйвер (без этого блока) успешно выдавал напряжение несколько раз подряд, пока состояние не
+// "остывало". Добавлено сюда, в ENABLE_BOOTSTRAP, чтобы наш enable() сам выполнял эту калибровку и
+// не зависел от стороннего ПО. НЕ проверено живьём после добавления -- см. docs/RE_LOG.md.
+const std::vector<std::pair<quint16, QByteArray>> kEnableCalibration = {
+    {0x0805, QByteArray::fromHex("0001000000")},
+    {0x0824, QByteArray::fromHex("00000101")},
+    {0x0824, QByteArray::fromHex("01000101")},
+    {0x0824, QByteArray::fromHex("00000001")},
+    {0x0824, QByteArray::fromHex("00010001")},
+    {0x0824, QByteArray::fromHex("00020001")},
+    {0x0824, QByteArray::fromHex("01000001")},
+    {0x0824, QByteArray::fromHex("01010001")},
+    {0x0824, QByteArray::fromHex("01020001")},
+    {0x0806, QByteArray::fromHex("4d494e4920000000")},
+    {0x0806, QByteArray::fromHex("4d494e4920000001")},
+    {0x0806, QByteArray::fromHex("4d494e4920000002")},
+    {0x0806, QByteArray::fromHex("4d494e4920000003")},
+    {0x0806, QByteArray::fromHex("4d494e4920000100")},
+    {0x0806, QByteArray::fromHex("4d494e4920000101")},
+    {0x0806, QByteArray::fromHex("4d494e4920000102")},
+    {0x0806, QByteArray::fromHex("4d494e4920000103")},
+    {0x0805, QByteArray::fromHex("0001000000")},
+    {0x0824, QByteArray::fromHex("00000101")},
+    {0x0824, QByteArray::fromHex("01000101")},
+    {0x0824, QByteArray::fromHex("00000001")},
+    {0x0824, QByteArray::fromHex("00010001")},
+    {0x0824, QByteArray::fromHex("00020001")},
+    {0x0824, QByteArray::fromHex("01000001")},
+    {0x0824, QByteArray::fromHex("01010001")},
+    {0x0824, QByteArray::fromHex("01020001")},
+    {0x0806, QByteArray::fromHex("4d494e4920000000")},
+    {0x0806, QByteArray::fromHex("4d494e4920000001")},
+    {0x0806, QByteArray::fromHex("4d494e4920000002")},
+    {0x0806, QByteArray::fromHex("4d494e4920000003")},
+    {0x0806, QByteArray::fromHex("4d494e4920000100")},
+    {0x0806, QByteArray::fromHex("4d494e4920000101")},
+    {0x0806, QByteArray::fromHex("4d494e4920000102")},
+    {0x0806, QByteArray::fromHex("4d494e4920000103")},
+};
+
 const std::vector<std::pair<quint16, QByteArray>> kOutPreamble = {
     {0x0831, QByteArray::fromHex("000000000000000000000000")},
     {0x0831, QByteArray::fromHex("000000000100000000000000")},

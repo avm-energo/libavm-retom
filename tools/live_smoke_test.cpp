@@ -34,9 +34,13 @@ int main(int argc, char **argv)
         sigSet.phi = { 0, 0, 0 };
         sigSet.freq = 50.0;
 
-        std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds ...\n", ua, holdSeconds);
+        std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds (keepAlive() every 2s) ...\n", ua, holdSeconds);
         driver.apply(sigSet);
-        QThread::sleep(static_cast<unsigned long>(holdSeconds));
+        for (int elapsed = 0; elapsed < holdSeconds; elapsed += 2)
+        {
+            QThread::sleep(2);
+            driver.keepAlive();
+        }
 
         std::printf("off()\n");
         driver.off();

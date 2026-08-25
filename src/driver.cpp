@@ -99,6 +99,13 @@ void RetomDriver::enable()
             transact(frame, std::max(cfg_.timeoutS, 2.0));
         }
     }
+    // Снято из живого захвата второго пакета ПО (не-RTDI) -- см. bootstrap.cpp::kEnableCalibration.
+    // Гипотеза: реальная аппаратная самокалибровка каналов, нужна раз за сессию питания прибора --
+    // без неё apply() давал 0V, пока прибор не был "прогрет" сторонним ПО в этой же сессии питания.
+    for (const QByteArray &frame : protocol::encodeEnableCalibration())
+    {
+        transact(frame, std::max(cfg_.timeoutS, 2.0));
+    }
     enabled_ = true;
 }
 
@@ -168,6 +175,11 @@ void RetomDriver::sendOut(const std::array<double, 13> &signalWords13)
     {
         transact(frame);
     }
+}
+
+quint32 RetomDriver::keepAlive()
+{
+    return readInputContacts();
 }
 
 quint32 RetomDriver::readInputContacts()

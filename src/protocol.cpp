@@ -111,6 +111,17 @@ std::vector<QByteArray> encodeEnableBootstrap()
     return out;
 }
 
+std::vector<QByteArray> encodeEnableCalibration()
+{
+    std::vector<QByteArray> out;
+    out.reserve(bootstrap::kEnableCalibration.size());
+    for (const auto &[num, data] : bootstrap::kEnableCalibration)
+    {
+        out.push_back(framing::packFrame(num, data));
+    }
+    return out;
+}
+
 std::vector<std::pair<quint16, QByteArray>> encodeEnableBootstrapTagged()
 {
     std::vector<std::pair<quint16, QByteArray>> out;
