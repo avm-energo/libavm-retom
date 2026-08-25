@@ -8,6 +8,21 @@
 #include <QThread>
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
+
+namespace
+{
+// RETOM_DEBUG=1 -- см. комментарий у transact(). Отдельная функция для fire-and-forget записей
+// (Lock/probe), которые идут в обход transact() и не ждут ответа.
+void debugTxRaw(const QByteArray &frame)
+{
+    if (std::getenv("RETOM_DEBUG"))
+    {
+        std::fprintf(stderr, "TX(no-wait) %s\n", frame.toHex(' ').constData());
+    }
+}
+} // namespace
 
 namespace retom
 {
@@ -98,7 +113,12 @@ void RetomDriver::connect(bool enable)
     // "зависаний": драйвер сдавался, не дождавшись ответа, который в принципе не должен был прийти.
     runOnIoThread([this] { transport_->open(kDefaultBaud); });
     QThread::msleep(1000); // даём VCP/устройству осесть после открытия порта
-    runOnIoThread([this] { transport_->write(protocol::encodeLock(true)); });
+    runOnIoThread(
+        [this]
+        {
+            debugTxRaw(protocol::encodeLock(true));
+            transport_->write(protocol::encodeLock(true));
+        });
     QThread::msleep(50);
 
     try
@@ -108,7 +128,12 @@ void RetomDriver::connect(bool enable)
         // "зависания устройства" в исходной реализации.
         for (const QByteArray &frame : protocol::encodeConnectBootstrap())
         {
-            runOnIoThread([this, &frame] { transport_->write(frame); });
+            runOnIoThread(
+                [this, &frame]
+                {
+                    debugTxRaw(frame);
+                    transport_->write(frame);
+                });
         }
     } catch (...)
     {
@@ -163,7 +188,12 @@ void RetomDriver::enable()
         {
             // Повторный Lock внутри последовательности -- прибор уже захвачен этим же
             // соединением, ответа не получает (подтверждено живым тестом 2026-08-18).
-            runOnIoThread([this, &frame] { transport_->write(frame); });
+            runOnIoThread(
+                [this, &frame]
+                {
+                    debugTxRaw(frame);
+                    transport_->write(frame);
+                });
         }
         else
         {
@@ -314,9 +344,17 @@ std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, do
     // Вся функция выполняется на ioThread_ (см. driver.h -- QSerialPort не переживает вызовы из
     // чужого потока) -- вызывающий поток (в т.ч. keepAliveLoop()) блокируется внутри
     // runOnIoThread() (Qt::BlockingQueuedConnection) до готовности результата/исключения.
+    // RETOM_DEBUG=1 в окружении -- дамп каждого TX/RX кадра на stderr (диагностика проблем,
+    // воспроизводимых только на конкретном стенде, где нет живого доступа для отладки, например
+    // 2026-08-25 -- Linux-стенд показывает 0V при чистом (без исключений) прогоне, см. RE_LOG.md).
+    const bool debug = std::getenv("RETOM_DEBUG") != nullptr;
     return runOnIoThread(
-        [this, &frame, timeoutS]() -> std::pair<quint16, QByteArray>
+        [this, &frame, timeoutS, debug]() -> std::pair<quint16, QByteArray>
         {
+            if (debug)
+            {
+                std::fprintf(stderr, "TX %s\n", frame.toHex(' ').constData());
+            }
             transport_->write(frame);
             const double timeout = timeoutS < 0.0 ? cfg_.timeoutS : timeoutS;
 
@@ -345,11 +383,20 @@ std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, do
                 }
                 try
                 {
-                    return framing::unpackFrame(buf.mid(start, end - start + 1));
+                    const auto result = framing::unpackFrame(buf.mid(start, end - start + 1));
+                    if (debug)
+                    {
+                        std::fprintf(stderr, "RX num=%#x payload=%s\n", result.first, result.second.toHex(' ').constData());
+                    }
+                    return result;
                 } catch (const framing::FramingError &)
                 {
                     buf = buf.mid(start + 1);
                 }
+            }
+            if (debug)
+            {
+                std::fprintf(stderr, "RX TIMEOUT\n");
             }
             throw RetomProtocolError(
                 QString("нет валидного ответа от прибора за %1 с").arg(timeout, 0, 'f', 1).toStdString());
