@@ -1,6 +1,8 @@
 #include "libavm-retom/transport.h"
 
 #include <QSerialPortInfo>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 
 namespace retom {
@@ -33,8 +35,15 @@ void FtdiTransport::open(qint32 baud) {
     }
     // pyserial по умолчанию поднимает DTR/RTS при открытии порта; QSerialPort -- нет (состояние
     // не определено). Выравниваем поведение явно -- расхождение с pyserial-версией транспорта.
-    serial_.setDataTerminalReady(true);
-    serial_.setRequestToSend(true);
+    const bool dtrOk = serial_.setDataTerminalReady(true);
+    const bool rtsOk = serial_.setRequestToSend(true);
+    if (std::getenv("RETOM_DEBUG"))
+    {
+        std::fprintf(stderr,
+            "[transport] port=%s dtrOk=%d rtsOk=%d pinoutSignals=0x%x lastError=%s\n",
+            port.toStdString().c_str(), dtrOk, rtsOk, static_cast<unsigned>(serial_.pinoutSignals()),
+            serial_.errorString().toStdString().c_str());
+    }
 }
 
 void FtdiTransport::close() {
