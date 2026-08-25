@@ -4,6 +4,7 @@
 #include "libavm-retom/protocol.h"
 
 #include <QElapsedTimer>
+#include <QMetaObject>
 #include <QThread>
 #include <algorithm>
 #include <cmath>
@@ -15,6 +16,75 @@ RetomDriver::RetomDriver(RetomConfig cfg, std::unique_ptr<ITransport> transport)
     : cfg_(std::move(cfg))
     , transport_(transport ? std::move(transport) : std::make_unique<FtdiTransport>(cfg_.vid, cfg_.pid))
 {
+    // ioThread_ живёт весь срок жизни RetomDriver (не только между connect()/disconnect()) --
+    // единственный поток, которому вообще разрешено трогать transport_ (см. driver.h). Настоящий
+    // QThread (не std::thread) -- QSerialPort требует реальную Qt event loop у своего потока-
+    // владельца, иначе падает на "Timers can only be used with threads started with QThread"
+    // (проверено живьём 2026-08-25 при первой, неудачной попытке на голом std::thread).
+    ioThread_.start();
+    ioContext_ = new QObject();
+    ioContext_->moveToThread(&ioThread_);
+    transport_->bindToIoThread(&ioThread_);
+}
+
+RetomDriver::~RetomDriver()
+{
+    // std::thread (keepAliveThread_) не должен быть joinable() на момент разрушения (иначе
+    // std::terminate) -- на случай, если вызывающий код уничтожит RetomDriver, не вызвав
+    // off()/disconnect() явно, пока держится ненулевой сигнал. keepAlive останавливаем ПЕРВЫМ (он
+    // сам зависит от ioThread_ через transact()), потом останавливаем сам ioThread_.
+    stopKeepAlive();
+    ioThread_.quit();
+    ioThread_.wait();
+    delete ioContext_; // ioThread_ уже не бежит -- безопасно удалить из любого потока
+}
+
+template <typename F>
+auto RetomDriver::runOnIoThread(F &&f) -> std::invoke_result_t<F>
+{
+    using R = std::invoke_result_t<F>;
+    std::exception_ptr eptr;
+    if constexpr (std::is_void_v<R>)
+    {
+        QMetaObject::invokeMethod(
+            ioContext_,
+            [&f, &eptr]()
+            {
+                try
+                {
+                    f();
+                } catch (...)
+                {
+                    eptr = std::current_exception();
+                }
+            },
+            Qt::BlockingQueuedConnection);
+        if (eptr)
+        {
+            std::rethrow_exception(eptr);
+        }
+    } else
+    {
+        R result {};
+        QMetaObject::invokeMethod(
+            ioContext_,
+            [&f, &result, &eptr]()
+            {
+                try
+                {
+                    result = f();
+                } catch (...)
+                {
+                    eptr = std::current_exception();
+                }
+            },
+            Qt::BlockingQueuedConnection);
+        if (eptr)
+        {
+            std::rethrow_exception(eptr);
+        }
+        return result;
+    }
 }
 
 void RetomDriver::connect(bool enable)
@@ -26,9 +96,9 @@ void RetomDriver::connect(bool enable)
     // с реальной аналоговой выдачей), при этом устройство полностью работоспособно на остальные
     // кадры. Прежний retry-с-переоткрытием-порта (kLockMaxAttempts) был ложным источником
     // "зависаний": драйвер сдавался, не дождавшись ответа, который в принципе не должен был прийти.
-    transport_->open(kDefaultBaud);
+    runOnIoThread([this] { transport_->open(kDefaultBaud); });
     QThread::msleep(1000); // даём VCP/устройству осесть после открытия порта
-    transport_->write(protocol::encodeLock(true));
+    runOnIoThread([this] { transport_->write(protocol::encodeLock(true)); });
     QThread::msleep(50);
 
     try
@@ -38,17 +108,17 @@ void RetomDriver::connect(bool enable)
         // "зависания устройства" в исходной реализации.
         for (const QByteArray &frame : protocol::encodeConnectBootstrap())
         {
-            transport_->write(frame);
+            runOnIoThread([this, &frame] { transport_->write(frame); });
         }
     } catch (...)
     {
         try
         {
-            transport_->write(protocol::encodeLock(false));
+            runOnIoThread([this] { transport_->write(protocol::encodeLock(false)); });
         } catch (...)
         {
         }
-        transport_->close();
+        runOnIoThread([this] { transport_->close(); });
         throw;
     }
     connected_ = true;
@@ -65,7 +135,7 @@ void RetomDriver::disconnect()
         RetomDriver *self;
         ~Cleanup()
         {
-            self->transport_->close();
+            self->runOnIoThread([self = self] { self->transport_->close(); });
             self->connected_ = false;
             self->enabled_ = false;
         }
@@ -92,7 +162,7 @@ void RetomDriver::enable()
         {
             // Повторный Lock внутри последовательности -- прибор уже захвачен этим же
             // соединением, ответа не получает (подтверждено живым тестом 2026-08-18).
-            transport_->write(frame);
+            runOnIoThread([this, &frame] { transport_->write(frame); });
         }
         else
         {
@@ -144,11 +214,13 @@ void RetomDriver::apply(const RetomSignalSet &signalSet)
 
     const auto words = protocol::buildSignalWords(signalSet.u, signalSet.i, signalSet.phi, signalSet.freq);
     sendOut(words);
+    startKeepAlive();
 }
 
 void RetomDriver::off()
 {
     requireConnected();
+    stopKeepAlive();
     std::array<double, 13> zeros {};
     zeros[12] = 50.0;
     sendOut(zeros);
@@ -177,9 +249,44 @@ void RetomDriver::sendOut(const std::array<double, 13> &signalWords13)
     }
 }
 
-quint32 RetomDriver::keepAlive()
+void RetomDriver::startKeepAlive()
 {
-    return readInputContacts();
+    stopKeepAlive(); // идемпотентный перезапуск -- на случай повторного apply() поверх активного
+    keepAliveStop_ = false;
+    keepAliveThread_ = std::thread(&RetomDriver::keepAliveLoop, this);
+}
+
+void RetomDriver::stopKeepAlive()
+{
+    if (keepAliveThread_.joinable())
+    {
+        {
+            std::lock_guard<std::mutex> lock(keepAliveMutex_);
+            keepAliveStop_ = true;
+        }
+        keepAliveCv_.notify_all();
+        keepAliveThread_.join();
+    }
+}
+
+void RetomDriver::keepAliveLoop()
+{
+    // 2с -- взято из живого захвата второго пакета ПО (опрос каждые ~3.1с не давал прибору
+    // "остыть"; 2с даёт запас). condition_variable вместо sleep() -- чтобы stopKeepAlive() будил
+    // поток немедленно, а не ждал до 2с на выходе из off()/disconnect().
+    std::unique_lock<std::mutex> lock(keepAliveMutex_);
+    while (!keepAliveCv_.wait_for(lock, std::chrono::seconds(2), [this] { return keepAliveStop_; }))
+    {
+        lock.unlock();
+        try
+        {
+            transact(protocol::encodeReadInputContacts());
+        } catch (...)
+        {
+            // best-effort -- транзиентная ошибка протокола не должна ронять фоновый поток.
+        }
+        lock.lock();
+    }
 }
 
 quint32 RetomDriver::readInputContacts()
@@ -201,41 +308,49 @@ void RetomDriver::setOutContact(int number, bool closed)
 
 std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, double timeoutS)
 {
-    transport_->write(frame);
-    const double timeout = timeoutS < 0.0 ? cfg_.timeoutS : timeoutS;
+    // Вся функция выполняется на ioThread_ (см. driver.h -- QSerialPort не переживает вызовы из
+    // чужого потока) -- вызывающий поток (в т.ч. keepAliveLoop()) блокируется внутри
+    // runOnIoThread() (Qt::BlockingQueuedConnection) до готовности результата/исключения.
+    return runOnIoThread(
+        [this, &frame, timeoutS]() -> std::pair<quint16, QByteArray>
+        {
+            transport_->write(frame);
+            const double timeout = timeoutS < 0.0 ? cfg_.timeoutS : timeoutS;
 
-    QElapsedTimer timer;
-    timer.start();
-    QByteArray buf;
-    while (timer.elapsed() < timeout * 1000)
-    {
-        const int remainingMs = static_cast<int>(timeout * 1000 - timer.elapsed());
-        const QByteArray chunk = transport_->read(128, std::min(remainingMs, 200));
-        if (chunk.isEmpty())
-        {
-            continue;
-        }
-        buf += chunk;
-        const int start = buf.indexOf(static_cast<char>(framing::kStart));
-        if (start < 0)
-        {
-            buf.clear();
-            continue;
-        }
-        const int end = buf.indexOf(static_cast<char>(framing::kEnd), start + 1);
-        if (end < 0)
-        {
-            continue;
-        }
-        try
-        {
-            return framing::unpackFrame(buf.mid(start, end - start + 1));
-        } catch (const framing::FramingError &)
-        {
-            buf = buf.mid(start + 1);
-        }
-    }
-    throw RetomProtocolError(QString("нет валидного ответа от прибора за %1 с").arg(timeout, 0, 'f', 1).toStdString());
+            QElapsedTimer timer;
+            timer.start();
+            QByteArray buf;
+            while (timer.elapsed() < timeout * 1000)
+            {
+                const int remainingMs = static_cast<int>(timeout * 1000 - timer.elapsed());
+                const QByteArray chunk = transport_->read(128, std::min(remainingMs, 200));
+                if (chunk.isEmpty())
+                {
+                    continue;
+                }
+                buf += chunk;
+                const int start = buf.indexOf(static_cast<char>(framing::kStart));
+                if (start < 0)
+                {
+                    buf.clear();
+                    continue;
+                }
+                const int end = buf.indexOf(static_cast<char>(framing::kEnd), start + 1);
+                if (end < 0)
+                {
+                    continue;
+                }
+                try
+                {
+                    return framing::unpackFrame(buf.mid(start, end - start + 1));
+                } catch (const framing::FramingError &)
+                {
+                    buf = buf.mid(start + 1);
+                }
+            }
+            throw RetomProtocolError(
+                QString("нет валидного ответа от прибора за %1 с").arg(timeout, 0, 'f', 1).toStdString());
+        });
 }
 
 void RetomDriver::requireConnected() const

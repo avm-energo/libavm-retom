@@ -5,6 +5,7 @@
 #include <QByteArray>
 #include <QSerialPort>
 #include <QString>
+#include <QThread>
 
 // Транспортный слой -- порт src/linretom/transport.py. Доступ через штатный VCP-порт FTDI
 // (QSerialPort), не через D2XX напрямую -- см. transport.py docstring для обоснования.
@@ -26,6 +27,11 @@ public:
     virtual bool isOpen() const = 0;
     virtual qint64 write(const QByteArray &data) = 0;
     virtual QByteArray read(int maxSize, int timeoutMs) = 0;
+
+    // Перенести внутренний QObject (если он есть) на другой поток -- RetomDriver вызывает это
+    // один раз при конструировании, чтобы дать транспорту affinity фонового ioThread_ (см.
+    // driver.h). Пустая реализация по умолчанию -- FakeTransport в тестах её не переопределяет.
+    virtual void bindToIoThread(QThread *) {}
 };
 
 class AVM_RETOM_EXPORT FtdiTransport : public ITransport {
@@ -40,6 +46,7 @@ public:
     bool isOpen() const override;
     qint64 write(const QByteArray &data) override;
     QByteArray read(int maxSize, int timeoutMs) override;
+    void bindToIoThread(QThread *thread) override;
 
 private:
     quint16 vid_;

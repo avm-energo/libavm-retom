@@ -132,5 +132,10 @@ private slots:
     }
 };
 
-QTEST_APPLESS_MAIN(TestDriver)
+// QTEST_MAIN (не APPLESS) -- RetomDriver теперь требует настоящий QCoreApplication: ioThread_ /
+// ioContext_ используют Qt::BlockingQueuedConnection для маршалинга вызовов на выделенный поток
+// (QSerialPort не переживает вызовы из чужого потока, см. driver.h/docs/RE_LOG.md, решено
+// 2026-08-25), а этот механизм сам по себе требует QCoreApplication, даже если тест использует
+// только FakeTransport и не трогает живой QSerialPort.
+QTEST_MAIN(TestDriver)
 #include "test_driver.moc"

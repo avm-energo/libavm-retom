@@ -3,8 +3,13 @@
 #include "libavm-retom/retom_export.h"
 #include "libavm-retom/transport.h"
 
+#include <QThread>
+#include <condition_variable>
 #include <memory>
+#include <mutex>
 #include <stdexcept>
+#include <thread>
+#include <type_traits>
 #include <utility>
 
 // Публичный API драйвера РЕТОМ-51 -- порт src/linretom/driver.py (источник истины: семантика,
@@ -25,12 +30,18 @@ struct AVM_RETOM_EXPORT RetomConfig
 };
 
 // Набор U/I/phi/f по фазам "A"/"B"/"C" -- отсутствующая фаза трактуется как 0.0, как в apply().
+// Default member initializers обязательны: до 7bcabf1 (map->array) неуказанная фаза просто
+// отсутствовала в std::map и lookup() отдавал 0.0; с std::array без инициализаторов
+// `RetomSignalSet s; s.u[0] = 1.0;` (частое использование, см. tests/test_driver.cpp) оставляет
+// s.u[1]/s.u[2]/s.i/s.phi/s.freq неопределённым мусором стека -- нашёл живой regression-тест
+// (2026-08-25) при добавлении keepalive-потока: тот же тестовый код внезапно начал падать на
+// "U=-9.25596e+61" из-за сдвига раскладки стека, обнажившего давно существовавший баг.
 struct AVM_RETOM_EXPORT RetomSignalSet
 {
-    std::array<double, 3> u;
-    std::array<double, 3> i;
-    std::array<double, 3> phi;
-    double freq;
+    std::array<double, 3> u { 0.0, 0.0, 0.0 };
+    std::array<double, 3> i { 0.0, 0.0, 0.0 };
+    std::array<double, 3> phi { 0.0, 0.0, 0.0 };
+    double freq = 50.0;
 };
 
 class AVM_RETOM_EXPORT RetomError : public std::runtime_error
@@ -67,6 +78,7 @@ public:
     // transport == nullptr -> создаётся настоящий FtdiTransport(cfg.vid, cfg.pid). Передача
     // своей реализации ITransport (например, в тестах) не трогает живое железо.
     explicit RetomDriver(RetomConfig cfg = {}, std::unique_ptr<ITransport> transport = nullptr);
+    ~RetomDriver(); // останавливает фоновый keepalive-поток, если он ещё активен
 
     void connect(bool enable = true);
     void disconnect();
@@ -74,17 +86,15 @@ public:
     void enable();
     void disable();
 
+    // Живая аналоговая выдача отключается прибором сама по себе, если хост молчит на проводе
+    // слишком долго -- похоже на watchdog, реальный порог не измерен эмпирически, но ~10-13с
+    // молчания достаточно, живой захват второго пакета ПО показывает опрос каждые ~3.1с как
+    // безопасный интервал (см. docs/RE_LOG.md). apply() сам поднимает фоновый поток, который
+    // дергает readInputContacts() каждые 2с, пока держится ненулевой сигнал -- off()/disconnect()
+    // его останавливают. Вызывающему коду НЕ нужно ничего опрашивать самому.
     void apply(const RetomSignalSet &signalSet);
     void off();
     void safetyStop();
-
-    // Живая аналоговая выдача (apply()) отключается прибором сама по себе, если хост молчит на
-    // проводе слишком долго -- похоже на watchdog, реальный порог не измерен, но живой захват
-    // второго пакета ПО показывает опрос каждые ~3.1с как безопасный интервал (само по себе не
-    // сигнал/не Out(), просто любой валидный кадр). Вызывающий код ДОЛЖЕН дергать это (или другой
-    // метод драйвера) с интервалом не реже ~2-3с, пока apply() держит ненулевой сигнал -- драйвер
-    // не делает этого сам (никакого внутреннего таймера/потока, синхронный API). См. docs/RE_LOG.md.
-    quint32 keepAlive();
 
     quint32 readInputContacts();
     void setOutContact(int number, bool closed);
@@ -104,10 +114,38 @@ private:
     void requireConnected() const;
     void requireEnabled() const;
 
+    // Фоновый watchdog-keepalive -- поднимается apply() после реальной (не нулевой) выдачи,
+    // останавливается off()/disconnect() ДО закрытия порта. startKeepAlive()/stopKeepAlive()
+    // вызываются только из потока-владельца RetomDriver (не из самого фонового потока), поэтому
+    // join() в stopKeepAlive() даёт корректную синхронизацию без гонки на connected_/enabled_.
+    void startKeepAlive();
+    void stopKeepAlive();
+    void keepAliveLoop();
+
+    // QSerialPort (внутри FtdiTransport) требует, чтобы ЛЮБОЙ вызов делался из потока, которому
+    // принадлежит объект (affinity) -- И чтобы у этого потока была настоящая Qt event loop (иначе
+    // "Timers can only be used with threads started with QThread", проверено живьём 2026-08-25:
+    // попытка сделать это через голый std::thread ловила именно эту ошибку). Поэтому ioThread_ --
+    // настоящий QThread (run() по умолчанию = exec()), transport_ переносится на него через
+    // ITransport::bindToIoThread()/QObject::moveToThread(), а ioContext_ -- пустой QObject,
+    // живущий на ioThread_, служащий целью для QMetaObject::invokeMethod(...,
+    // Qt::BlockingQueuedConnection) -- это и есть runOnIoThread(): вызывающий поток (в т.ч.
+    // keepAliveLoop(), сам по себе обычный std::thread) блокируется до выполнения лямбды на
+    // ioThread_ и получает результат/исключение обратно.
+    template <typename F> auto runOnIoThread(F &&f) -> std::invoke_result_t<F>;
+
     RetomConfig cfg_;
     std::unique_ptr<ITransport> transport_;
     bool connected_ = false;
     bool enabled_ = false;
+
+    QThread ioThread_;
+    QObject *ioContext_ = nullptr; // живёт на ioThread_, см. комментарий выше
+
+    std::thread keepAliveThread_;
+    std::mutex keepAliveMutex_;
+    std::condition_variable keepAliveCv_;
+    bool keepAliveStop_ = false;
 };
 
 } // namespace retom

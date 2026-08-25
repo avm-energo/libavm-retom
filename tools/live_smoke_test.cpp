@@ -17,8 +17,8 @@ int main(int argc, char **argv)
     const int holdSeconds = argc > 1 ? std::atoi(argv[1]) : 8;
     const double ua = argc > 2 ? std::atof(argv[2]) : 1.0;
 
-    // Явный COM10 -- на стенде теперь два FTDI-устройства (docs/RE_LOG.md 2026-08-19), поиск по
-    // vid/pid неоднозначен; COM10 -- подтверждённый РЕТОМ.
+    // Явный порт -- на Windows-стенде было два FTDI-устройства одновременно (docs/RE_LOG.md
+    // 2026-08-19), поиск по vid/pid неоднозначен; замените на конкретный порт вашего стенда.
     retom::RetomConfig cfg;
     retom::RetomDriver driver(
         cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, "/dev/ttyUSB0"));
@@ -34,13 +34,9 @@ int main(int argc, char **argv)
         sigSet.phi = { 0, 0, 0 };
         sigSet.freq = 50.0;
 
-        std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds (keepAlive() every 2s) ...\n", ua, holdSeconds);
-        driver.apply(sigSet);
-        for (int elapsed = 0; elapsed < holdSeconds; elapsed += 2)
-        {
-            QThread::sleep(2);
-            driver.keepAlive();
-        }
+        std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds ...\n", ua, holdSeconds);
+        driver.apply(sigSet); // держит сигнал сама (фоновый keepalive-поток внутри apply())
+        QThread::sleep(static_cast<unsigned long>(holdSeconds));
 
         std::printf("off()\n");
         driver.off();

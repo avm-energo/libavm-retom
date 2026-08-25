@@ -60,4 +60,8 @@ QByteArray FtdiTransport::read(int maxSize, int timeoutMs) {
     return serial_.read(maxSize);
 }
 
+void FtdiTransport::bindToIoThread(QThread *thread) {
+    serial_.moveToThread(thread);
+}
+
 }  // namespace retom
