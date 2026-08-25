@@ -63,15 +63,15 @@ std::vector<QByteArray> encodeChannelsReset()
     return encodeOut(zeros);
 }
 
-std::array<double, 13> buildSignalWords(
-    const std::array<double, 3> &u, const std::array<double, 3> &i, const std::array<double, 3> &phi, const double freq)
+std::array<double, 13> buildSignalWords(const std::array<double, 3> &u, const std::array<double, 3> &uPhi,
+    const std::array<double, 3> &i, const std::array<double, 3> &phi, const double freq)
 {
     std::array<double, 13> out {};
     int idx = 0;
     for (int count = 0; count < 3; ++count)
     {
         out[idx++] = u[count];
-        out[idx++] = 0.0; // U phases are set to 0 degrees
+        out[idx++] = uPhi[count];
     }
     for (int count = 0; count < 3; ++count)
     {

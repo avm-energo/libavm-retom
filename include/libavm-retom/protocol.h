@@ -44,9 +44,11 @@ AVM_RETOM_EXPORT QByteArray encodeFrequency(
 AVM_RETOM_EXPORT std::vector<QByteArray> encodeOut(const std::array<double, 13> &signalWords13);
 AVM_RETOM_EXPORT std::vector<QByteArray> encodeChannelsReset();
 
-// u/i/phi -- значения по фазам "A"/"B"/"C" (отсутствующая фаза = 0.0). Ток -- в А на выходе РЕТОМ.
-AVM_RETOM_EXPORT std::array<double, 13> buildSignalWords(const std::array<double, 3> &u, const std::array<double, 3> &i,
-    const std::array<double, 3> &phi, const double freq);
+// u/uPhi/i/phi -- значения по фазам "A"/"B"/"C" (отсутствующая фаза = 0.0). Ток -- в А на выходе
+// РЕТОМ. uPhi -- угол канала напряжения (до 2026-08-25 был жёстко зашит в 0.0 для всех фаз);
+// phi -- угол канала тока, как и раньше.
+AVM_RETOM_EXPORT std::array<double, 13> buildSignalWords(const std::array<double, 3> &u, const std::array<double, 3> &uPhi,
+    const std::array<double, 3> &i, const std::array<double, 3> &phi, const double freq);
 
 AVM_RETOM_EXPORT QByteArray encodeLock(bool openDevice);
 

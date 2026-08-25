@@ -16,18 +16,32 @@ On the **Linux PC**, running the current code (both repos pulled to latest `mast
   "Fix history" below) — but the exact same code that worked reliably there (many confirmed live
   tests, including fresh mains power-cycles) does not work on Linux.
 
-**Immediate next step (in progress when this was written):** `RETOM_DEBUG=1` env var now dumps
-every TX/RX frame to stderr — added specifically because there's no live device access from the
-machine continuing this investigation. Get a capture from the Linux side:
+**Update 2026-08-25 (later same day):** re-confirmed on the Windows stand a third time, this time
+with the newer instrumented build (commits `68ed555` timestamped debug output, `da5530b`
+DTR/RTS/pinoutSignals-on-open logging) — see `retom_debug_windows3.log` (committed `3df4f41`).
+Result unchanged: user physically confirmed Ua=1.0V/Ia=1.0A steady for the full 10s hold. Note the
+device had been reassigned from `COM10` to `COM3` by Windows since the earlier captures (same
+physical device, just a different enumerated port — don't be alarmed if it moves again). New data
+point logged on port open: `dtrOk=1 rtsOk=1 pinoutSignals=0xd4` (bit-decoded: CTS|RTS|DSR|DTR all
+high, DCD/RI low). Every TX/RX line now also carries a `[elapsed_ms]` timestamp.
+
+**Immediate next step:** get the equivalent capture from the Linux side with this same
+instrumented build, so the `dtrOk`/`rtsOk`/`pinoutSignals` values and per-frame timestamps can be
+diffed directly against `retom_debug_windows3.log`:
 
 ```sh
-RETOM_DEBUG=1 ./build/tools/live_smoke_test /dev/ttyUSB0 10 1.0 2> retom_debug.log
+RETOM_DEBUG=1 ./build/tools/live_smoke_test /dev/ttyUSB0 10 1.0 2> retom_debug_linux.log
 ```
 
-(adjust binary path/port/args as needed for however it's being invoked there), then compare the
-byte sequences against what's documented as working in `docs/RE_LOG.md` in the `linretom` repo
-(if that repo is also cloned on this machine — see "Repo layout" below) — specifically the sections
-about the arm-preamble and calibration-block fixes.
+(adjust binary path/port/args as needed for however it's being invoked there — pull to latest
+`master` first to pick up commits `68ed555`/`da5530b`). Compare:
+1. `pinoutSignals` value on port open — if it differs from `0xd4`, that's the strongest lead yet
+   (QSerialPort's Linux backend may not expose/set all the same lines as the Windows VCP driver).
+2. Per-frame `[elapsed_ms]` deltas against `retom_debug_windows3.log`, in case something is
+   timing-sensitive despite the earlier "no timeout" observation.
+3. Byte sequences against what's documented as working in `docs/RE_LOG.md` in the `linretom` repo
+   (if that repo is also cloned on this machine — see "Repo layout" below) — specifically the
+   sections about the arm-preamble and calibration-block fixes.
 
 ## Repo layout — TWO separate git repos, both touched this session
 

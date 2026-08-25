@@ -56,12 +56,23 @@ private slots:
 
     void buildSignalWordsDefaultsMissingPhasesToZero()
     {
-        const auto words = protocol::buildSignalWords({ { 1.0, 0.0, 0.0 } }, { { 0.0, 2.0, 0.0 } }, {}, 50.0);
+        const auto words = protocol::buildSignalWords({ { 1.0, 0.0, 0.0 } }, {}, { { 0.0, 2.0, 0.0 } }, {}, 50.0);
         QCOMPARE(words[0], 1.0);   // Ua
-        QCOMPARE(words[1], 0.0);   // phi_a
+        QCOMPARE(words[1], 0.0);   // phi_a (uPhi не задан)
         QCOMPARE(words[6], 0.0);   // Ia (не задан)
         QCOMPARE(words[8], 2.0);   // Ib
         QCOMPARE(words[12], 50.0); // freq
+    }
+
+    void buildSignalWordsAppliesUPhi()
+    {
+        // Подтверждено живым фазометром 2026-08-25 (docs/SESSION_HANDOFF.md): uPhi={0,-120,-240}
+        // -> phi(Ua-Ub)=phi(Ua-Uc)=phi(Ub-Uc)=0 на приборе (симметричная трёхфазная система).
+        const auto words = protocol::buildSignalWords(
+            { { 1.0, 2.0, 3.0 } }, { { 0.0, -120.0, -240.0 } }, { { 0.0, 0.0, 0.0 } }, {}, 50.0);
+        QCOMPARE(words[1], 0.0);    // Ua_phi
+        QCOMPARE(words[3], -120.0); // Ub_phi
+        QCOMPARE(words[5], -240.0); // Uc_phi
     }
 
     void setOutContactEncodesFlag()
