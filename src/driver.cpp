@@ -127,6 +127,14 @@ void RetomDriver::apply(const RetomSignalSet &signalSet)
         }
     }
 
+    // Снято из живого захвата второго пакета ПО (не-RTDI) -- см. bootstrap.cpp::kOutArmPreamble.
+    // Только перед РЕАЛЬНОЙ (не нулевой) выдачей, не на каждый sendOut() -- ~140 доп. кадров,
+    // дублировать их на каждый off()/safetyStop() бессмысленно дорого.
+    for (const QByteArray &frame : protocol::encodeOutArmPreamble())
+    {
+        transact(frame);
+    }
+
     const auto words = protocol::buildSignalWords(signalSet.u, signalSet.i, signalSet.phi, signalSet.freq);
     sendOut(words);
 }

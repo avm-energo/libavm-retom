@@ -62,6 +62,7 @@ AVM_RETOM_EXPORT std::vector<QByteArray> encodeEnableBootstrap();
 AVM_RETOM_EXPORT std::vector<std::pair<quint16, QByteArray>> encodeEnableBootstrapTagged();
 
 AVM_RETOM_EXPORT std::vector<QByteArray> encodeOutPreamble();
+AVM_RETOM_EXPORT std::vector<QByteArray> encodeOutArmPreamble();
 
 AVM_RETOM_EXPORT QByteArray encodeReadInputContacts();
 AVM_RETOM_EXPORT quint32 decodeInputContacts(const QByteArray &payload);

@@ -12,5 +12,6 @@ namespace retom::bootstrap {
 extern const std::vector<std::pair<quint16, QByteArray>> kConnectBootstrap;
 extern const std::vector<std::pair<quint16, QByteArray>> kEnableBootstrap;
 extern const std::vector<std::pair<quint16, QByteArray>> kOutPreamble;
+extern const std::vector<std::pair<quint16, QByteArray>> kOutArmPreamble;
 
 }  // namespace retom::bootstrap

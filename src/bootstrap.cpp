@@ -105,4 +105,28 @@ const std::vector<std::pair<quint16, QByteArray>> kOutPreamble = {
     {0x0813, QByteArray::fromHex("02000101")},
 };
 
+// Минимальная arm-последовательность перед реальным Out(Ua=1.0V,Ia=1.0A) -- снята из СВЕЖЕГО
+// живого дифференциального захвата 2026-08-25 (второй пакет ПО, НЕ RTDI, сессия начата ПОСЛЕ
+// Enable() -- захват стартовал только на операции Out(), это чистая delta без шума Enable()).
+// ЗАМЕНЯЕТ два предыдущих неудачных варианта (пара 0x0950/0x0904; затем 143-кадровый блок из
+// устаревшего захвата 2026-08-19) -- оба не дали напряжения на живом приборе. Этот блок содержит
+// шаг, которого не было ни в одном из предыдущих: 0x0814x3 (выбор канала 0/1/2) перед 0x0813x3.
+// Семантика большинства подкоманд не установлена -- byte-в-byte replay, как ENABLE_BOOTSTRAP.
+const std::vector<std::pair<quint16, QByteArray>> kOutArmPreamble = {
+    {0x0806, QByteArray::fromHex("4d494e49070000")},
+    {0x0902, QByteArray::fromHex("")},
+    {0x0815, QByteArray::fromHex("000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")},
+    {0x0806, QByteArray::fromHex("4d494e490200")},
+    {0x0811, QByteArray::fromHex("")},
+    {0x0806, QByteArray::fromHex("4d494e490200")},
+    {0x0806, QByteArray::fromHex("4d494e492a0005000000")},
+    {0x0923, QByteArray::fromHex("")},
+    {0x0814, QByteArray::fromHex("0000")},
+    {0x0814, QByteArray::fromHex("0100")},
+    {0x0814, QByteArray::fromHex("0200")},
+    {0x0813, QByteArray::fromHex("00000101")},
+    {0x0813, QByteArray::fromHex("01000101")},
+    {0x0813, QByteArray::fromHex("02000101")},
+};
+
 }  // namespace retom::bootstrap

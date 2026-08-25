@@ -133,6 +133,17 @@ std::vector<QByteArray> encodeOutPreamble()
     return out;
 }
 
+std::vector<QByteArray> encodeOutArmPreamble()
+{
+    std::vector<QByteArray> out;
+    out.reserve(bootstrap::kOutArmPreamble.size());
+    for (const auto &[num, data] : bootstrap::kOutArmPreamble)
+    {
+        out.push_back(framing::packFrame(num, data));
+    }
+    return out;
+}
+
 QByteArray encodeReadInputContacts()
 {
     return framing::packFrame(CMD_READ_INPUT_CONTACTS, {});
