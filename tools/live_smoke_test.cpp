@@ -9,6 +9,7 @@
 #include <QThread>
 #include <cstdio>
 #include <exception>
+#include <string>
 
 int main(int argc, char **argv)
 {
@@ -16,6 +17,7 @@ int main(int argc, char **argv)
 
     const int holdSeconds = argc > 1 ? std::atoi(argv[1]) : 8;
     const double ua = argc > 2 ? std::atof(argv[2]) : 1.0;
+    const bool threePhase = argc > 3 && std::string(argv[3]) == "3phase";
 
     // Явный порт -- на Windows-стенде было два FTDI-устройства одновременно (docs/RE_LOG.md
     // 2026-08-19), поиск по vid/pid неоднозначен; замените на конкретный порт вашего стенда.
@@ -29,12 +31,25 @@ int main(int argc, char **argv)
         std::printf("connected+enabled OK\n");
 
         retom::RetomSignalSet sigSet;
-        sigSet.u = { ua, 0, 0 };
-        sigSet.i = { 1, 0, 0 };
-        sigSet.phi = { 0, 0, 0 };
+        if (threePhase)
+        {
+            // Симметричная трёхфазная сеть: Ua/Ub/Uc разнесены по фазе (uPhi, commit b6d2209),
+            // Ia/Ib/Uc совпадают по фазе со своим напряжением (cosφ=1) -- та же раскладка, что
+            // подтверждена живым фазометром на Windows-стенде (retom_debug_3phase_uPhi.log).
+            sigSet.u = { ua, ua, ua };
+            sigSet.uPhi = { 0, -120, -240 };
+            sigSet.i = { 1, 1, 1 };
+            sigSet.phi = { 0, -120, -240 };
+        } else
+        {
+            sigSet.u = { ua, 0, 0 };
+            sigSet.i = { 1, 0, 0 };
+            sigSet.phi = { 0, 0, 0 };
+        }
         sigSet.freq = 50.0;
 
-        std::printf("apply(Ua=%.2fV, f=50Hz) -- holding %ds ...\n", ua, holdSeconds);
+        std::printf("apply(%s Ua=%.2fV, f=50Hz) -- holding %ds ...\n",
+            threePhase ? "3-phase" : "single-phase", ua, holdSeconds);
         driver.apply(sigSet); // держит сигнал сама (фоновый keepalive-поток внутри apply())
         std::printf("isOutputActive() = %s\n", driver.isOutputActive() ? "true" : "false");
         QThread::sleep(static_cast<unsigned long>(holdSeconds));
