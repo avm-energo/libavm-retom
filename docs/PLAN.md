@@ -78,18 +78,37 @@ case is described in `kiv-testing`, `docs/REPORT_RETOM_TIMER_ANALYSIS.md`.
 
 From `linretom` Phase F, lower priority:
 
-- F.2 — harmonics and arbitrary waveform (`IAnalogOutputs`);
+- **F.2 — harmonics and arbitrary waveform (`IAnalogOutputs`). A test now wants
+  this.** AVM Tester's AVM-KIV catalogue (suite S2) would check the module's
+  harmonic values — `UhA`…, `IhA`…, the crest factors `KrF_*` — against a signal
+  with a known harmonic content, which needs RETOM to produce one. Nothing in
+  this library exposes it, and `linretom`'s own `PLAN.md` records the protocol as
+  entirely un-reversed: "ни одного захвата с этим интерфейсом ещё не снято", with
+  the previously mentioned "working harmonics" belonging to the Windows COM
+  reference, not to our protocol level. So the order is: a Windows capture of
+  `NewAnalogChannels()` / `SetSignal` / `AddHarmonica` (linretom F.2), then the
+  frames, then a driver call here. Until then those AVM-KIV checks stay out of
+  the catalogue.
 - F.3 — `OutEx` / `OutSteps` / `OutSeq` (hardware ramps and step sequences);
 - extended binary I/O (`IExtBinIO`, up to 64 inputs and 32 outputs) — only if a
   bench needs more contacts than the base set.
 
 ## 5. Housekeeping
 
-- [ ] `docs/SESSION_HANDOFF.md` (2026-08-25) still describes a 0 V fault on Linux
-  as open. `linretom`'s `PLAN.md` records both Linux faults solved the same day
-  (the calibration block and the keep-alive), and the latest commit here reads
-  "it's working now". Confirm on the Linux bench, then update or archive the
-  handoff so it no longer reads as the current state.
+- [x] `docs/SESSION_HANDOFF.md` (2026-08-25) still describes a 0 V fault on
+  Linux as open. **Confirmed on a Linux bench 2026-10-05 — the fault is
+  real, not stale.** The "it's working now" commit (`2a3b6f0`) only added a
+  three-phase mode to the smoke test; it did not change `src/`, and this
+  build (from `master`, carrying fixes 1-5) still reproduces 0 V exactly as
+  described. Two of the handoff's Linux-specific hypotheses were tested and
+  eliminated (`pinoutSignals` identical to Windows; FTDI `latency_timer` at
+  1 ms made no difference), and the fault was independently confirmed via
+  the Energomonitor (separate instrument, separate library, no DUT
+  involved) — current is correctly produced, voltage is completely absent
+  from the physical output terminals. See `docs/SESSION_HANDOFF.md`'s
+  2026-10-05 update for the full detail, including a real RX payload
+  difference (`0x804` zeroed on Linux vs populated on Windows) that is the
+  first concrete, non-"maybe it's Linux" lead.
 
 ## Rules for every item
 

@@ -7,6 +7,67 @@ machines automatically.
 
 ## TL;DR — what's broken right now
 
+**Update 2026-10-05 (AVM Tester bench, different machine, same symptom):**
+Re-confirmed, and one hypothesis is now eliminated with independent
+instrument confirmation of where the fault actually is.
+
+1. **`pinoutSignals` matches Windows exactly.** Captured today against the
+   real RETOM-51 on `/dev/ttyUSB3`: `dtrOk=1 rtsOk=1 pinoutSignals=0xd4` —
+   byte-for-byte identical to `retom_debug_windows3.log`'s `COM3` capture.
+   **The leading hypothesis (Linux QSerialPort not setting the same control
+   lines) is dead.** (For comparison, the Energomonitor's unrelated FTDI
+   chip on the same host reports `0xdc` — confirming the value really is
+   per-device, not a host-wide Linux quirk.)
+2. **FTDI `latency_timer` dropped to 1 ms (from the Linux default 16) — no
+   change.** Voltage still reads 0 V. That hypothesis is dead too.
+3. **Frame-sequence diff against `retom_debug_windows3.log`**: TX sequences
+   match once keep-alive (`0x902`/`ReadInputContacts`) interleaving is
+   discounted — that's just polling-timing noise, not a protocol
+   divergence. One real payload difference found in the RX stream: a
+   `0x804` block reads back **fully zeroed** on Linux (`00 33 f8 09 00 00
+   ...`) where Windows reads it **populated** (`01 33 f8 09 aa aa aa aa ee
+   ee ee ee ...`). Consistent with the calibration block (fix #2,
+   `kEnableCalibration`) genuinely not having completed/settled on this
+   run — worth checking whether it needs to run *again* after a specific
+   trigger this session didn't hit, or whether `0x804`'s first byte is a
+   readiness flag worth polling before trusting `apply()`.
+4. **Independent confirmation via the Energomonitor (separate instrument,
+   separate library, no DUT involved at all):** applied `Ua=57.74V,
+   Ia=0.5A` on RETOM and read both the Energomonitor (`libavm-emon`,
+   USB link) and an unrelated AVM-KIV module (Modbus) at the same moment:
+   ```
+   Energomonitor   Ia = 0.4998 A   Ua = 0.0000 V
+   AVM-KIV (DUT)   IA = 49.81 mA   UA = 0.0000 kV
+   ```
+   Both agree: current is present and correctly scaled by each instrument's
+   own ratio; voltage is completely absent from the physical output
+   terminals. **This rules out everything downstream of RETOM** — no lead,
+   adapter, or reading instrument can explain it, since two independent
+   instruments on two independent libraries both see nothing. The fault is
+   in RETOM's own voltage generation (or in what this driver sends to
+   produce it), full stop.
+5. Session log: `retom_debug_linux.log` (committed alongside this update) —
+   captured via `retomhold`, a small driven-hold tool built against this
+   library directly (not the `tools/live_smoke_test` binary, whose
+   hard-coded `/dev/ttyUSB0` would have grabbed the Energomonitor on this
+   particular bench, not RETOM — ports are per-bench, always verify by
+   VID:PID/model string before trusting a hard-coded default).
+
+Full write-up, including the Energomonitor cross-check methodology, is in
+the `avm-tester` repo: `ai/AVM_KIV_TEST_CATALOG.md`, section "S2 first run
+against the real bench" and the Energomonitor-confirmation paragraph right
+after it.
+
+**Where this leaves the investigation:** both of the two Linux-specific
+hypotheses this handoff named (control lines, latency timer) are now
+eliminated by direct test. The `0x804` zeroed-block difference (point 3) is
+the first concrete lead that isn't "maybe it's Linux" — it points back at
+calibration/readiness state on the device itself, which is exactly the
+class of bug fix #2 was built to solve. The next step is probably a live
+differential capture around *that* block specifically, the same technique
+that found fixes #1 and #2 originally.
+
+
 On the **Linux PC**, running the current code (both repos pulled to latest `master`):
 - `apply(Ua=1.0V, Ia=1.0A)` held for 20s → **current is correct (1.0A the whole time)**, but
   **voltage reads 0V the entire time**.
