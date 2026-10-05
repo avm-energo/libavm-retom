@@ -1,0 +1,103 @@
+// Диагностика 0 V (docs/SESSION_HANDOFF.md, 2026-10-05): раз в секунду печатает ответы
+// RetomDriver::readStatus(). Фаза 1 -- без выдачи, фаза 2 -- apply(Ua, Ia=0.5 А).
+// Использование: status_probe <port> recover   (попытки программного лечения)
+//                 status_probe <port> [секунд_без_выдачи=20] [секунд_с_выдачей=20] [Ua=1.0]
+#include "libavm-retom/driver.h"
+
+#include <QCoreApplication>
+#include <QThread>
+#include <cstdio>
+#include <exception>
+#include <string>
+
+static void poll(retom::RetomDriver &driver, const char *phase, int seconds)
+{
+    for (int t = 0; t < seconds; ++t)
+    {
+        const auto r = driver.readStatus();
+        std::printf("%s t=%2ds 1c=%s 1d=%s 02=%s\n", phase, t, r[0].toHex(' ').constData(),
+            r[1].toHex(' ').constData(), r[2].toHex(' ').constData());
+        std::fflush(stdout);
+        QThread::sleep(1);
+    }
+}
+
+// Режим "recover" -- пробует программные способы вернуть флаг готовности каскада напряжения из 0
+// в 1, по нарастающей, и печатает флаг после каждого шага. Нужен, когда прибор УЖЕ в состоянии 0 В
+// (см. docs/SESSION_HANDOFF.md); на здоровом приборе ничего не доказывает.
+static void flagLine(retom::RetomDriver &driver, const char *step)
+{
+    const auto f = driver.voltageStageReady();
+    std::printf("recover: after %-34s flag=%s\n", step, f ? (*f ? "1" : "0") : "?");
+    std::fflush(stdout);
+}
+
+static int recover(const char *port)
+{
+    retom::RetomConfig cfg;
+    retom::RetomDriver driver(
+        cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, port));
+    driver.connect(false);
+    flagLine(driver, "connect(false)");
+    driver.enable();
+    flagLine(driver, "enable()");
+    driver.disable();
+    driver.enable();
+    flagLine(driver, "disable()+enable()");
+    driver.disconnect();
+    QThread::sleep(5);
+    driver.connect(true);
+    flagLine(driver, "disconnect, 5s, connect(true)");
+    driver.disable();
+    QThread::sleep(10);
+    driver.enable();
+    flagLine(driver, "disable, 10s idle, enable");
+    driver.disconnect();
+    return 0;
+}
+
+int main(int argc, char **argv)
+{
+    QCoreApplication app(argc, argv);
+    if (argc < 2)
+    {
+        std::fprintf(stderr, "usage: status_probe <port> [idle_s] [active_s] [Ua]\n");
+        return 2;
+    }
+    if (argc == 3 && std::string(argv[2]) == "recover")
+    {
+        try { return recover(argv[1]); } catch (const std::exception &e) { std::fprintf(stderr, "ERROR: %s\n", e.what()); return 1; }
+    }
+    const int idle = argc > 2 ? std::atoi(argv[2]) : 20;
+    const int active = argc > 3 ? std::atoi(argv[3]) : 20;
+    const double ua = argc > 4 ? std::atof(argv[4]) : 1.0;
+
+    retom::RetomConfig cfg;
+    retom::RetomDriver driver(
+        cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, argv[1]));
+    try
+    {
+        driver.connect(false);
+        poll(driver, "connected", 3);
+        driver.enable();
+        poll(driver, "enabled  ", idle);
+        if (active > 0)
+        {
+            retom::RetomSignalSet s;
+            s.u = { ua, 0, 0 };
+            s.i = { 0.5, 0, 0 };
+            s.phi = { 0, 0, 0 };
+            s.freq = 50.0;
+            driver.apply(s);
+            poll(driver, "applied  ", active);
+            driver.off();
+        }
+        driver.disconnect();
+    } catch (const std::exception &e)
+    {
+        std::fprintf(stderr, "ERROR: %s\n", e.what());
+        try { driver.safetyStop(); driver.disconnect(); } catch (...) {}
+        return 1;
+    }
+    return 0;
+}

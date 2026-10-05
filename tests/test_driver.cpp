@@ -36,11 +36,15 @@ public:
     {
         writtenFrames_.push_back(frame);
         const auto [num, payload] = framing::unpackFrame(frame);
-        Q_UNUSED(payload);
 
         if (num == protocol::CMD_LOCK || num == protocol::CMD_LINK_PROBE || num == protocol::CMD_LINK_ACK)
         {
             return frame.size(); // fire-and-forget, ответа не бывает никогда
+        }
+        if (num == protocol::CMD_SET_OUT_CONTACT_MINI && payload.startsWith(QByteArray("MINI\x1c", 5)))
+        {
+            pendingRead_ += framing::packFrame(num, statusReply_); // ответ на запрос флага готовности
+            return frame.size();
         }
         pendingRead_ += framing::packFrame(num, QByteArray(1, '\x01'));
         return frame.size();
@@ -53,6 +57,8 @@ public:
         return chunk;
     }
 
+    // 12 байт: флаг готовности каскада напряжения -- байт 11 (см. RetomDriver::voltageStageReady()).
+    QByteArray statusReply_ = QByteArray::fromHex("010101000000000300000001");
     bool opened_ = false;
     QByteArray pendingRead_;
     std::vector<QByteArray> writtenFrames_;
@@ -117,6 +123,41 @@ private slots:
 
         RetomSignalSet sigSet;
         QVERIFY_THROWS_EXCEPTION(RetomNotEnabled, driver.apply(sigSet));
+    }
+
+    void applyThrowsWhenVoltageStageNotReady()
+    {
+        RetomConfig cfg;
+        cfg.timeoutS = 0.2;
+        auto fake = std::make_unique<FakeTransport>();
+        fake->statusReply_ = QByteArray::fromHex("010101000000000300000000"); // флаг 0
+        RetomDriver driver(cfg, std::move(fake));
+        driver.connect(true);
+
+        RetomSignalSet withU;
+        withU.u[0] = 57.74;
+        QVERIFY_THROWS_EXCEPTION(RetomVoltageStageNotReady, driver.apply(withU));
+        QVERIFY(!driver.isOutputActive());
+
+        RetomSignalSet currentOnly; // ток при неготовом каскаде штатен -- не блокируем
+        currentOnly.i[0] = 0.5;
+        driver.apply(currentOnly);
+        QVERIFY(driver.isOutputActive());
+        driver.off();
+    }
+
+    void applyPassesWhenVoltageStageReady()
+    {
+        RetomConfig cfg;
+        cfg.timeoutS = 0.2;
+        RetomDriver driver(cfg, std::make_unique<FakeTransport>());
+        driver.connect(true);
+
+        RetomSignalSet withU;
+        withU.u[0] = 57.74;
+        driver.apply(withU);
+        QVERIFY(driver.isOutputActive());
+        driver.off();
     }
 
     void applyRejectsOverLimit()

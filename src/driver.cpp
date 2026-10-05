@@ -251,6 +251,14 @@ void RetomDriver::apply(const RetomSignalSet &signalSet)
         }
     }
 
+    // Ток при неготовом каскаде напряжения выдаётся нормально, а вот U -- нет, и молча (прибор
+    // отвечает на все кадры штатно). Лучше громкая ошибка с лечением, чем 0 В на клеммах.
+    const bool wantsVoltage = std::any_of(signalSet.u.begin(), signalSet.u.end(), [](double u) { return u != 0.0; });
+    if (cfg_.checkVoltageStage && wantsVoltage && voltageStageReady() == std::optional<bool>(false))
+    {
+        throw RetomVoltageStageNotReady();
+    }
+
     // Снято из живого захвата второго пакета ПО (не-RTDI) -- см. bootstrap.cpp::kOutArmPreamble.
     // Только перед РЕАЛЬНОЙ (не нулевой) выдачей, не на каждый sendOut() -- ~140 доп. кадров,
     // дублировать их на каждый off()/safetyStop() бессмысленно дорого.
@@ -344,6 +352,31 @@ quint32 RetomDriver::readInputContacts()
     const auto [num, payload] = transact(protocol::encodeReadInputContacts());
     Q_UNUSED(num);
     return protocol::decodeInputContacts(payload);
+}
+
+std::vector<QByteArray> RetomDriver::readStatus()
+{
+    requireConnected();
+    std::vector<QByteArray> replies;
+    for (const char *hex : { "4d494e491c0000", "4d494e491d", "4d494e4902" })
+    {
+        replies.push_back(
+            transact(framing::packFrame(protocol::CMD_SET_OUT_CONTACT_MINI, QByteArray::fromHex(hex))).second);
+    }
+    return replies;
+}
+
+std::optional<bool> RetomDriver::voltageStageReady()
+{
+    requireConnected();
+    const QByteArray reply
+        = transact(framing::packFrame(protocol::CMD_SET_OUT_CONTACT_MINI, QByteArray::fromHex("4d494e491c0000")))
+              .second;
+    if (reply.size() <= 11)
+    {
+        return std::nullopt; // короткий/чужой ответ (например, после сброса по watchdog)
+    }
+    return reply.at(11) == 1;
 }
 
 void RetomDriver::setOutContact(int number, bool closed)

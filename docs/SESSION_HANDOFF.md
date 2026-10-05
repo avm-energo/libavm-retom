@@ -7,6 +7,30 @@ machines automatically.
 
 ## TL;DR — what's broken right now
 
+## Update 2026-10-05 (evening): root cause located — device state, cured by mains power-cycle
+
+Supersedes the "real lead" in the earlier 2026-10-05 update (the `0x804`/`0x803`/`PLUG` differences
+are the same in working and failing Linux runs — a red herring).
+
+- RETOM is `/dev/ttyUSB3` (udev model `USB_Link_-_Dynamics_tm_`); the Energomonitor is
+  `/dev/ttyUSB0` (FT232R A602YD53), read with `libavm-emon/build/examples/get_analog_inputs <port> usb`.
+- **Discriminator:** 5th payload byte of each record in the reply to `MINI 0x1c` (`0x806`; decoded
+  from the old `44 03` frame). `1` in every run that produced voltage (08-26 Linux, Windows 3-phase,
+  Windows cold start after bootstrap), `0` in every 0 V run. Our frames never change it: identical TX
+  and ACKs, same flag outcome depends on device state at connect.
+- **Fix: mains power-cycle the RETOM.** Before: flag 0 throughout, Energomonitor Ua=0.0000 V. After:
+  flag 1 from `enable()` on, Energomonitor Ua=57.85 V (requested 57.74 V), Ia 4.998 (see note).
+- Subsequent sessions without a power-cycle keep working (flag stays 1): clean rerun, 11 s watchdog
+  expiry, and SIGKILL mid-output followed by a new session all still gave Ua=57.85 V. So the
+  trigger that puts the device into the flag-0 state is **not yet identified** (prime suspects: a long
+  idle/power-on time, or something another tool — AVM Tester, retomhold — did to it).
+- New diagnostics: `RetomDriver::readStatus()`, `voltageStageReady()`, `tools/status_probe`
+  (`status_probe <port> [idle_s] [active_s] [Ua]`; polls the status once a second, no keep-alive
+  during the idle phase, so the device's ~11 s watchdog expiry is visible).
+- Note: Energomonitor Ia read 4.998 A for a 0.5 A request this time vs 0.4998 A earlier today — likely
+  a different current range/ratio on the Energomonitor; unchecked.
+
+
 **Update 2026-10-05 (AVM Tester bench, different machine, same symptom):**
 Re-confirmed, and one hypothesis is now eliminated with independent
 instrument confirmation of where the fault actually is.

@@ -7,6 +7,7 @@
 #include <condition_variable>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <thread>
 #include <type_traits>
@@ -27,6 +28,9 @@ struct AVM_RETOM_EXPORT RetomConfig
     double timeoutS = 1.0; // таймаут ожидания ответа на один кадр
     quint16 vid = kRetomVid;
     quint16 pid = kRetomPid;
+    // apply() с ненулевым напряжением сверяется с флагом готовности выходного каскада и бросает
+    // RetomVoltageStageNotReady вместо молчаливых 0 В (см. RetomDriver::voltageStageReady()).
+    bool checkVoltageStage = true;
 };
 
 // Набор U/I/phi/f по фазам "A"/"B"/"C" -- отсутствующая фаза трактуется как 0.0, как в apply().
@@ -79,6 +83,20 @@ public:
     using RetomError::RetomError;
 };
 
+// Прибор принимает все кадры без ошибок, ток выдаёт, но выходной каскад напряжения не готов -- на
+// клеммах U нет. Наблюдалось 2026-10-05; лечится отключением питания прибора от сети (мэйнс
+// power-cycle) на несколько секунд, USB-переподключение и перезапуск программы не помогают.
+class AVM_RETOM_EXPORT RetomVoltageStageNotReady : public RetomError
+{
+public:
+    RetomVoltageStageNotReady()
+        : RetomError("Прибор РЕТОМ не выдаёт напряжение: выходной каскад напряжения не готов (ток выдаётся "
+                     "нормально, напряжения на клеммах не будет). Выключите питание РЕТОМ от сети на несколько "
+                     "секунд и включите снова, затем повторите подключение.")
+    {
+    }
+};
+
 class AVM_RETOM_EXPORT RetomDriver
 {
 public:
@@ -104,6 +122,18 @@ public:
     void safetyStop();
 
     quint32 readInputContacts();
+
+    // Диагностика (2026-10-05): сырые ответы 0x806 на MINI 0x1c / 0x1d / 0x02 -- те самые запросы,
+    // что есть в enable-bootstrap. Флаг в ответе на 0x1c отличает рабочие прогоны от прогонов с 0 V
+    // (см. docs/SESSION_HANDOFF.md). Ничего не включает, безопасно вызывать в любой момент после
+    // connect().
+    std::vector<QByteArray> readStatus();
+
+    // Флаг готовности выходного каскада напряжения: 5-й байт первой записи в ответе на MINI 0x1c.
+    // Во всех зафиксированных прогонах с напряжением он 1, во всех прогонах с 0 В -- 0 (подтверждено
+    // Энергомонитором 2026-10-05: после mains power-cycle флаг стал 1 и Ua появилось). Корреляция,
+    // не документированная семантика. nullopt -- ответ не удалось разобрать (флаг неизвестен).
+    std::optional<bool> voltageStageReady();
     void setOutContact(int number, bool closed);
 
     bool isConnected() const
