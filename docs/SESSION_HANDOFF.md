@@ -1,3 +1,38 @@
+## Update 2026-10-06 (later): a mains power-cycle is not a reliable cure
+
+Following directly from the morning's recurrence (next section down): the
+user confirmed RETOM's mains had been off from the end of the previous
+session until just before today's session started, so the flag-0 state found
+this morning was most likely a **cold-boot state**, not a fault that
+developed while idle and powered. That's good news for the "nothing the host
+sends causes this" reading — it also means the device has simply never
+before been checked immediately after a cold start.
+
+But the follow-up is the important part: asked to mains power-cycle RETOM to
+clear it (the only remedy on record, from the 2026-10-05 evening entry), the
+user did — and `status_probe <port> 3 20 57.74` immediately after still read
+flag **0**, `apply()` throwing `RetomVoltageStageNotReady` exactly as before.
+A second status check a short while later (`status_probe <port> 3 0 0.1`,
+no `apply()`) still showed flag 0. **This is the first time a mains
+power-cycle has failed to clear the fault** — every prior occurrence
+(2026-10-05 evening) cured it in exactly one cycle. The cure is evidently not
+deterministic; it may need to be repeated, or need a longer off-time than
+"a few seconds" to let something (capacitors? a latch with its own RC decay?)
+fully reset.
+
+**Practical consequence for AVM Tester (recorded there too, in
+`ai/RETOM_FAULT_WATCH.md`):** current-only work is unaffected — `apply()`'s
+voltage-readiness guard only fires when a non-zero voltage is requested, so
+S2's current-only cases can proceed regardless of the flag. Only
+voltage-carrying cases need the flag at 1, and getting there may now take
+more than one power-cycle attempt.
+
+**Not yet investigated:** whether a longer off-time clears it more reliably
+than a short one; whether repeated cycles eventually succeed or the device is
+degrading; whether `0x804`'s zeroed-vs-populated calibration block (the one
+concrete lead from the 2026-10-05 evening entry, never followed up) tracks
+the flag any better than mains power alone does.
+
 # Session handoff — RETOM-51 zero-voltage investigation (2026-08-25)
 
 Written so a fresh Claude Code session (or a human) on a different machine can pick this up with
