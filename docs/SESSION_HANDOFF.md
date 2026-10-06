@@ -7,6 +7,51 @@ machines automatically.
 
 ## TL;DR — what's broken right now
 
+## Update 2026-10-06 (morning): natural recurrence overnight — full software recovery confirmed not to work
+
+The device was left in the working state (flag 1) at the end of the previous
+session (5 October, evening). Checked again this morning, untouched by any
+tool in between: **flag 0.** This is the first time the fault's *onset* has
+been caught directly rather than inferred from "it was broken when we got to
+it" — worth recording precisely because the trigger is still unknown.
+
+- **`status_probe <port> recover` run to completion against a genuinely
+  faulty device for the first time.** All five steps — `connect(false)`,
+  `enable()`, `disable()+enable()`, `disconnect()`/5 s/`connect(true)`,
+  `disable()`/10 s idle/`enable()` — read flag **0** throughout. No software
+  sequence tried so far recovers it. This strengthens the "hardware latch"
+  reading: nothing this driver sends changes the flag; only a mains
+  power-cycle has ever cleared it.
+- **Raw status capture** (`status_probe <port> 3 0 0.1`, idle then enabled,
+  no `apply()` — `active=0` keeps the real-signal branch unreached): 5th byte
+  of each `0x1c` reply is `0` throughout, consistent with the boolean flag.
+  One texture worth another look sometime: the very first poll right after
+  `connect()` returns a short 4-byte `0x1c` reply (`01 00 00 00`); every poll
+  after that is the full ~71-byte record. Not chased further this session —
+  noted in case it turns out to matter.
+- **`apply()`'s guard fired for real, for the first time**, against a live
+  fault rather than a simulated one: requesting `Ua=57.74 V` threw
+  `RetomVoltageStageNotReady` immediately, before any signal was sent. Exactly
+  the intended behaviour — this is the first live confirmation the exception
+  does what it was built for.
+- **The Energomonitor could not be reached this morning** — two full attempts
+  (`libavm-emon`'s own retry budget, up to ~200 s each) both ended
+  `"expected 4 header bytes, got 0"`, i.e. genuine silence, not a wrong-value
+  reply. This is *separate* from RETOM's fault (the Energomonitor is a
+  different device on a different library), but it happened on the same
+  morning after the same unknown gap, which is itself worth asking about:
+  **do RETOM and the Energomonitor share a power strip or outlet?** If so, an
+  overnight power interruption to both — rather than something specific to
+  RETOM's internal state — becomes a live hypothesis for the trigger, and a
+  cheap one to rule in or out by just asking whoever has access to the bench.
+- **Not yet recovered.** The device is still in the flag-0 state as of this
+  write-up; a mains power-cycle has not been tried yet this session, by
+  design — the point this time is to gather as much evidence as possible
+  about the *broken* state itself before curing it, since every previous
+  occurrence was cured (by power-cycle) before it could be examined this
+  closely.
+
+
 ## Update 2026-10-05 (evening): root cause located — device state, cured by mains power-cycle
 
 Supersedes the "real lead" in the earlier 2026-10-05 update (the `0x804`/`0x803`/`PLUG` differences
