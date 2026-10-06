@@ -7,6 +7,17 @@ machines automatically.
 
 ## TL;DR — what's broken right now
 
+## Update 2026-10-06 (end of day): cycling worked; unit faults often at power-up
+
+Further clean cycles (single session 30 s after power-on, flag after `enable()`): FAULT, FAULT (2 min
+off), FAULT (fully isolated: no load, DUT and Energomonitor off), then GOOD on the next cycle. With the
+Energomonitor reconnected: Ua = 57.86 V, Ia = 4.9975 A, flag 1, `apply()` check passed. Conclusion:
+the cause is inside the RETOM (isolation did not help), not load, host software or off-time; retrying
+power-cycles eventually brings it up. Recommended routine: mains on, wait ~30 s, run
+`status_probe <port> 3 0` and only start tests when the flag is 1. If the unit keeps faulting on most
+power-ups, send it to the manufacturer's service.
+
+
 ## Update 2026-10-06 (later): fault is not time-limited; mains cycles cure it, but not always first try
 
 Power-cycle outcomes so far (flag after `enable()`): good, FAULT, FAULT, good (wait 30 s), good
