@@ -7,6 +7,19 @@ machines automatically.
 
 ## TL;DR — what's broken right now
 
+## Update 2026-10-06 (later): fault is not time-limited; mains cycles cure it, but not always first try
+
+Power-cycle outcomes so far (flag after `enable()`): good, FAULT, FAULT, good (wait 30 s), good
+(first session timed out during boot), FAULT (eager `enable()+apply()` session). The fault, once
+present, did **not** clear by itself: flag 0 at every one-minute read-only check for 11 min, and still
+0 after a further 10 min with the device completely untouched (about 25 min after onset). So the
+earlier "cleared after ~10 min" was the mains cycles, not time; and fault vs good after power-on looks
+**non-deterministic** (same procedure gave both outcomes), pointing to a start-up race or marginal
+hardware in the unit, not to host behaviour. `status_probe <port> eager [minutes]` reproduces avm-tester's
+connect/enable/apply right after power-on and then monitors. Library message now says: off ≥10 s, on,
+wait ~30 s, repeat 2-3 times if needed.
+
+
 ## Update 2026-10-06: the fault recurred right after mains-on, survived power-cycles, then cleared
 
 - Fault reappeared; `apply()` correctly threw `RetomVoltageStageNotReady`. With the check bypassed

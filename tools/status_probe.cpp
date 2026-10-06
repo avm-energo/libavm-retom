@@ -5,7 +5,9 @@
 #include "libavm-retom/driver.h"
 
 #include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QThread>
+#include <optional>
 #include <cstdio>
 #include <exception>
 #include <string>
@@ -56,6 +58,76 @@ static int recover(const char *port)
     return 0;
 }
 
+// Режим "eager" -- воспроизводит поведение avm-tester сразу после включения питания: ждёт, пока
+// прибор начнёт отвечать, и тут же enable() + apply() (проверку флага обходит). Затем -- мониторинг
+// флага раз в минуту (read-only сессии), чтобы измерить, сколько держится состояние 0 В.
+static const char *flagStr(const std::optional<bool> &f)
+{
+    return f ? (*f ? "1" : "0") : "?";
+}
+
+static int eager(const char *port, int monitorMinutes)
+{
+    QElapsedTimer clock;
+    clock.start();
+    auto stamp = [&] { return clock.elapsed() / 1000.0; };
+    for (int attempt = 0;; ++attempt)
+    {
+        try
+        {
+            retom::RetomConfig cfg;
+            cfg.checkVoltageStage = false;
+            cfg.timeoutS = 0.5;
+            retom::RetomDriver driver(
+                cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, port));
+            driver.connect(false);
+            const auto f0 = driver.voltageStageReady(); // бросит, пока прибор не отвечает
+            std::printf("[%7.1fs] first reply, attempt %d, flag=%s\n", stamp(), attempt, flagStr(f0));
+            driver.enable();
+            std::printf("[%7.1fs] enabled, flag=%s\n", stamp(), flagStr(driver.voltageStageReady()));
+            retom::RetomSignalSet sig;
+            sig.u = { 57.74, 0, 0 };
+            sig.i = { 0.5, 0, 0 };
+            sig.freq = 50.0;
+            driver.apply(sig);
+            std::printf("[%7.1fs] applied (check bypassed), flag=%s\n", stamp(), flagStr(driver.voltageStageReady()));
+            std::fflush(stdout);
+            QThread::sleep(8);
+            driver.off();
+            driver.disconnect();
+            break;
+        } catch (const std::exception &e)
+        {
+            if (attempt < 5 || attempt % 20 == 0)
+                std::printf("[%7.1fs] attempt %d: %s\n", stamp(), attempt, e.what());
+            std::fflush(stdout);
+            if (attempt > 600) { std::printf("gave up\n"); return 1; }
+        }
+        QThread::msleep(300);
+    }
+    for (int m = 1; m <= monitorMinutes; ++m)
+    {
+        QThread::sleep(60);
+        try
+        {
+            retom::RetomConfig cfg;
+            retom::RetomDriver driver(
+                cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, port));
+            driver.connect(true);
+            const auto f = driver.voltageStageReady();
+            std::printf("[%7.1fs] monitor +%d min: flag=%s\n", stamp(), m, flagStr(f));
+            std::fflush(stdout);
+            driver.disconnect();
+            if (f && *f)
+                break;
+        } catch (const std::exception &e)
+        {
+            std::printf("[%7.1fs] monitor +%d min: error %s\n", stamp(), m, e.what());
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
@@ -63,6 +135,10 @@ int main(int argc, char **argv)
     {
         std::fprintf(stderr, "usage: status_probe <port> [idle_s] [active_s] [Ua] [nocheck]\n");
         return 2;
+    }
+    if (argc >= 3 && std::string(argv[2]) == "eager")
+    {
+        return eager(argv[1], argc > 3 ? std::atoi(argv[3]) : 20);
     }
     if (argc == 3 && std::string(argv[2]) == "recover")
     {
