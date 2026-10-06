@@ -7,6 +7,26 @@ machines automatically.
 
 ## TL;DR — what's broken right now
 
+## Update 2026-10-06: the fault recurred right after mains-on, survived power-cycles, then cleared
+
+- Fault reappeared; `apply()` correctly threw `RetomVoltageStageNotReady`. With the check bypassed
+  (`status_probe ... nocheck`): Ia = 4.9975 A, Ua = 0.0000 V (same signature). Flag 0 from connect
+  through `enable()`. `status_probe <port> recover` (enable, disable+enable, reconnect, 10 s idle):
+  flag stayed 0 at every step -> **no software cure found**.
+- A second mains-cycle (60 s off, outputs disconnected) did NOT cure it (flag still 0, cold-state
+  records `17` at connect proved nothing else had touched it first). A **third** cycle did: first
+  clean session flag 1 after `enable()`, byte-identical to the good cold run of 2026-10-05.
+  Fourth cycle: also good. So the fault is not "cured by any power-cycle"; it persisted across
+  two cycles and then cleared on its own.
+- Hypotheses tested and **falsified**: (a) contact during the device's boot window (a first
+  session that timed out right after mains-on, followed by a second one: flag 1, fine);
+  (b) avm-tester's `findModbusDevice()` Modbus request (addr 2, fn 3, 9600 8N1) written to the RETOM
+  port (flag stayed 1; other baud/parity not tried).
+- Open, untested: thermal/overload protection that needs time to clear (fits "survived two cycles,
+  cleared later"); what ran in avm-tester just before; ambient/fan state of the unit.
+- `status_probe` gained a 5th argument `nocheck` (bypass the library flag check).
+
+
 ## Update 2026-10-06 (morning): natural recurrence overnight — full software recovery confirmed not to work
 
 The device was left in the working state (flag 1) at the end of the previous

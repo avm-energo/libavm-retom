@@ -61,7 +61,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     if (argc < 2)
     {
-        std::fprintf(stderr, "usage: status_probe <port> [idle_s] [active_s] [Ua]\n");
+        std::fprintf(stderr, "usage: status_probe <port> [idle_s] [active_s] [Ua] [nocheck]\n");
         return 2;
     }
     if (argc == 3 && std::string(argv[2]) == "recover")
@@ -73,6 +73,7 @@ int main(int argc, char **argv)
     const double ua = argc > 4 ? std::atof(argv[4]) : 1.0;
 
     retom::RetomConfig cfg;
+    cfg.checkVoltageStage = !(argc > 5 && std::string(argv[5]) == "nocheck"); // 5-й арг.: обойти проверку флага
     retom::RetomDriver driver(
         cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, argv[1]));
     try
