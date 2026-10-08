@@ -59,8 +59,11 @@ static int recover(const char *port)
 }
 
 // Режим "eager" -- воспроизводит поведение avm-tester сразу после включения питания: ждёт, пока
-// прибор начнёт отвечать, и тут же enable() + apply() (проверку флага обходит). Затем -- мониторинг
-// флага раз в минуту (read-only сессии), чтобы измерить, сколько держится состояние 0 В.
+// прибор начнёт отвечать, и тут же enable() + apply(). Затем -- мониторинг флага раз в минуту
+// (read-only сессии). Подтверждено 2026-10-08 (см. docs/SESSION_HANDOFF.md): сам флаг (0x1c)
+// читается "готов" лишь секунду-другую после enable(), затем откатывается -- но apply() сразу
+// после connect(true), без опроса статуса между ними, даёт верное напряжение каждый раз. apply()
+// больше не проверяет флаг сам (убрано из driver.cpp), печать его здесь -- просто наблюдение.
 static const char *flagStr(const std::optional<bool> &f)
 {
     return f ? (*f ? "1" : "0") : "?";
@@ -76,7 +79,6 @@ static int eager(const char *port, int monitorMinutes)
         try
         {
             retom::RetomConfig cfg;
-            cfg.checkVoltageStage = false;
             cfg.timeoutS = 0.5;
             retom::RetomDriver driver(
                 cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, port));
@@ -133,7 +135,7 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     if (argc < 2)
     {
-        std::fprintf(stderr, "usage: status_probe <port> [idle_s] [active_s] [Ua] [nocheck]\n");
+        std::fprintf(stderr, "usage: status_probe <port> [idle_s] [active_s] [Ua]\n");
         return 2;
     }
     if (argc >= 3 && std::string(argv[2]) == "eager")
@@ -149,7 +151,6 @@ int main(int argc, char **argv)
     const double ua = argc > 4 ? std::atof(argv[4]) : 1.0;
 
     retom::RetomConfig cfg;
-    cfg.checkVoltageStage = !(argc > 5 && std::string(argv[5]) == "nocheck"); // 5-й арг.: обойти проверку флага
     retom::RetomDriver driver(
         cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, argv[1]));
     try

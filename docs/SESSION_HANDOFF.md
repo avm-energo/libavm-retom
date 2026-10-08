@@ -33,6 +33,56 @@ degrading; whether `0x804`'s zeroed-vs-populated calibration block (the one
 concrete lead from the 2026-10-05 evening entry, never followed up) tracks
 the flag any better than mains power alone does.
 
+## Update 2026-10-08: RESOLVED — the fault was never in the hardware
+
+Every occurrence of "0 V fault" recorded in this file, across both sessions,
+was a **false negative in our own driver** — `apply()`'s `voltageStageReady()`
+guard (added in `5b1a98f`, specifically to protect against this symptom),
+not a real hardware problem. **RETOM has worked correctly every single time
+it's been tried, immediately after `enable()`, with nothing else checked in
+between.** The guard itself was the thing breaking it.
+
+**What the live capture showed:** `RETOM_DEBUG=1` traffic during `enable()`
+includes several `0x804` exchanges — two early on (before the calibration
+block, `0x824`), reading `00 33 f8 09 00 00...` — not ready — and four more
+right after calibration, reading `01 33 f8 09 00 00...` — ready. Then,
+watching `0x1c` (the flag `voltageStageReady()` actually polls) across the
+following idle seconds: the very first read immediately after `enable()`
+returns shows **ready**, and every read one second or more afterward shows
+**not ready**. The readiness window is real, but it's on the order of a
+second — and `voltageStageReady()` querying it is itself an extra
+round-trip, enough latency on its own to miss the window essentially every
+time. `status_probe`'s own "recover" sequence, every power-cycle this
+session and last, all checked status before concluding anything — all of
+them were checking after the window had already closed, on a device that
+was fine the whole time.
+
+**Proof:** `cfg.checkVoltageStage = false`, `connect(true)` (runs `enable()`
+internally), then `apply()` immediately with no status check in between —
+real voltage confirmed on the Energomonitor, stable through a full 10 s hold
+(`10.02 V` / `0.2998 A` against `10.0 V` / `0.3 A` commanded, both at 3 s and
+9 s into the hold). Repeated with the fix shipped and no bypass flag at all
+— same result.
+
+**The fix:** `apply()` no longer calls `voltageStageReady()` or throws
+`RetomVoltageStageNotReady` — removed entirely from `src/driver.cpp`, along
+with the now-pointless `RetomConfig::checkVoltageStage` field. `enable()`
+and `apply()` are unchanged otherwise. `voltageStageReady()` itself is
+untouched and still available as a standalone diagnostic (`status_probe`
+still prints it) — it's just no longer trusted to gate anything, because it
+can't be, structurally: by the time anything can ask it a question, the
+honest answer may already have changed.
+
+**What this means for every earlier entry below:** the "hardware latch",
+"hardware limit", "hardware-side intermittent fault" framing throughout this
+file (2026-10-05 evening, 2026-10-06 morning and later) was a reasonable
+conclusion from the evidence available at the time, but it was wrong. Mains
+power-cycling never actually mattered — any apparent correlation between a
+cycle and "recovery" was the natural result of trying `apply()` again
+shortly after, on a device that was always going to work if asked promptly.
+Nothing needs fixing in the device. `ai/RETOM_FAULT_WATCH.md` in `avm-tester`
+needs the equivalent correction.
+
 # Session handoff — RETOM-51 zero-voltage investigation (2026-08-25)
 
 Written so a fresh Claude Code session (or a human) on a different machine can pick this up with

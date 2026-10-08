@@ -95,6 +95,14 @@ From `linretom` Phase F, lower priority:
 
 ## 5. Housekeeping
 
+- [x] **2026-10-08: the 0 V "fault" below is resolved — it was never in the
+  hardware.** `apply()`'s own `voltageStageReady()` guard was a false
+  negative: the readiness flag it polled genuinely reads "ready" for about a
+  second after `enable()`, then reverts, and the guard's own status check was
+  itself enough extra latency to miss that window almost every time. Fixed by
+  removing the guard from `apply()` entirely (`src/driver.cpp`); real voltage
+  confirmed stable on the Energomonitor with the fix shipped, no bypass flag.
+  Full detail in `docs/SESSION_HANDOFF.md`'s 2026-10-08 update, at the top.
 - [x] `docs/SESSION_HANDOFF.md` (2026-08-25) still describes a 0 V fault on
   Linux as open. **Confirmed on a Linux bench 2026-10-05 — the fault is
   real, not stale.** The "it's working now" commit (`2a3b6f0`) only added a

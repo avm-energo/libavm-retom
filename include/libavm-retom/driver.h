@@ -28,9 +28,6 @@ struct AVM_RETOM_EXPORT RetomConfig
     double timeoutS = 1.0; // таймаут ожидания ответа на один кадр
     quint16 vid = kRetomVid;
     quint16 pid = kRetomPid;
-    // apply() с ненулевым напряжением сверяется с флагом готовности выходного каскада и бросает
-    // RetomVoltageStageNotReady вместо молчаливых 0 В (см. RetomDriver::voltageStageReady()).
-    bool checkVoltageStage = true;
 };
 
 // Набор U/I/phi/f по фазам "A"/"B"/"C" -- отсутствующая фаза трактуется как 0.0, как в apply().

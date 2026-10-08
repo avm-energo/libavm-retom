@@ -125,7 +125,14 @@ private slots:
         QVERIFY_THROWS_EXCEPTION(RetomNotEnabled, driver.apply(sigSet));
     }
 
-    void applyThrowsWhenVoltageStageNotReady()
+    // До 2026-10-08 apply() сверялся с этим флагом и бросал RetomVoltageStageNotReady -- убрано:
+    // живой захват показал, что сам флаг (0x1c) читается "готов" лишь секунду-другую после
+    // enable(), затем сам откатывается на 0 независимо от того, реально ли прибор способен выдать
+    // напряжение (он способен, стабильно, каждый раз -- проверено Энергомонитором). Опрос статуса
+    // перед apply() сам по себе и был причиной ложного "не готов": лишний обмен кадрами выводил за
+    // то самое окно. apply() больше не проверяет флаг и не блокируется им -- voltageStageReady()
+    // остаётся самостоятельным диагностическим методом (см. docs/SESSION_HANDOFF.md, 2026-10-08).
+    void applyProceedsRegardlessOfVoltageStageFlag()
     {
         RetomConfig cfg;
         cfg.timeoutS = 0.2;
@@ -134,14 +141,11 @@ private slots:
         RetomDriver driver(cfg, std::move(fake));
         driver.connect(true);
 
+        QCOMPARE(driver.voltageStageReady(), std::optional<bool>(false)); // метод сам по себе не меняется
+
         RetomSignalSet withU;
         withU.u[0] = 57.74;
-        QVERIFY_THROWS_EXCEPTION(RetomVoltageStageNotReady, driver.apply(withU));
-        QVERIFY(!driver.isOutputActive());
-
-        RetomSignalSet currentOnly; // ток при неготовом каскаде штатен -- не блокируем
-        currentOnly.i[0] = 0.5;
-        driver.apply(currentOnly);
+        QVERIFY_THROWS_NO_EXCEPTION(driver.apply(withU));
         QVERIFY(driver.isOutputActive());
         driver.off();
     }
