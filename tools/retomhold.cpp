@@ -3,6 +3,7 @@
 // Печатает "APPLY ..." сразу после apply(), чтобы вызывающий процесс мог дождаться именно
 // этого момента, а не гадать с фиксированной задержкой.
 //   retomhold <port> <seconds> [UA UB UC IA IB IC phiA phiB phiC freq uPhiA uPhiB uPhiC]
+//   retomhold <port> check   -- one-shot voltage-output pre-flight check, see below
 // Без сигнальных аргументов подключается и включается, но ничего не подаёт -- нулевое
 // состояние. uPhi по умолчанию 0/-120/-240.
 //
@@ -43,6 +44,17 @@
 // driver.off()/disconnect() и может оставить РЕТОМ посреди выдачи. Теперь
 // обычный `kill` (SIGTERM) или Ctrl-C (SIGINT) прерывают ожидание и всё равно
 // проходят через штатное выключение перед выходом.
+//
+// РЕЖИМ "check" (добавлено туда же): `retomhold <port> check` -- однократная
+// предполётная проверка (RetomDriver::verifyVoltageOutput()): подаёт реальный
+// тестовый сигнал по фазе A, ждёт установления, проверяет, что напряжение на
+// клеммах действительно есть, и печатает чёткий PASS/FAIL вместо того, чтобы
+// предоставлять это диагностировать вручную через Энергомонитор каждый раз.
+// Мотивировано тем же сбоем, что и остальные правки в этом файле: втроём за
+// одну неделю (15/16/19 октября 2026) найден живой, воспроизводимый отказ
+// каскада напряжения РЕТОМ (ток и частота в норме, напряжения на клеммах
+// нет), каждый раз требовавший ручной диагностики Энергомонитором, прежде
+// чем стало ясно, что дело не в ДУТе и не в тестовом инструменте.
 #include "libavm-retom/driver.h"
 
 #include <QCoreApplication>
@@ -123,7 +135,8 @@ int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     const QString port = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QStringLiteral("/dev/ttyUSB0");
-    const int seconds = argc > 2 ? std::atoi(argv[2]) : 20;
+    const bool checkMode = argc > 2 && QString::fromLocal8Bit(argv[2]) == QLatin1String("check");
+    const int seconds = (argc > 2 && !checkMode) ? std::atoi(argv[2]) : 20;
 
     const int lockFd = acquirePortLock(port);
     if (lockFd < 0)
@@ -134,6 +147,32 @@ int main(int argc, char **argv)
 
     retom::RetomConfig cfg;
     retom::RetomDriver driver(cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, port));
+
+    if (checkMode)
+    {
+        try
+        {
+            driver.connect(true);
+            std::printf("checking RETOM voltage output on %s (applying a real single-phase test signal, "
+                        "settling, then verifying)...\n",
+                port.toLocal8Bit().constData());
+            std::fflush(stdout);
+            driver.verifyVoltageOutput();
+            driver.disconnect();
+            std::printf("PASS: RETOM voltage output confirmed\n");
+            ::close(lockFd);
+            return 0;
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "FAIL: %s\n", e.what());
+            try { driver.safetyStop(); } catch (...) {}
+            try { driver.disconnect(); } catch (...) {}
+            ::close(lockFd);
+            return 1;
+        }
+    }
+
     try
     {
         driver.connect(true);

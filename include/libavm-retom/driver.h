@@ -133,6 +133,21 @@ public:
     // Энергомонитором 2026-10-05: после mains power-cycle флаг стал 1 и Ua появилось). Корреляция,
     // не документированная семантика. nullopt -- ответ не удалось разобрать (флаг неизвестен).
     std::optional<bool> voltageStageReady();
+
+    // One-time pre-flight check (added 19 October 2026, avm-tester): applies
+    // a real single-phase test signal (testU/testI on phase A, others 0),
+    // waits settleMs for it to genuinely settle, then checks
+    // voltageStageReady() and throws RetomVoltageStageNotReady if it comes
+    // back a definite "not ready" (a nullopt/ambiguous reply does NOT
+    // block -- too little data to act on). Restores output to off()
+    // afterward either way. NOT the same guard removed from apply() on
+    // 2026-10-08 -- that checked the flag in a narrow, often-still-settling
+    // window right after enable() and mostly produced false blocks on a
+    // healthy device; this is a deliberate, slower, single check meant to
+    // be called once before real work starts, not before every apply().
+    // requires connect()+enable() first.
+    void verifyVoltageOutput(double testU = 10.0, double testI = 0.1, int settleMs = 5000);
+
     void setOutContact(int number, bool closed);
 
     bool isConnected() const
