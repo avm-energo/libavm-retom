@@ -12,7 +12,7 @@
 // "абсолютное" значение для всех трёх фаз при разнесённых uPhi (симметричная
 // трёхфазная сеть), все три токовых фазора схлопнутся в одно направление
 // вместо разнесения на 120° -- RetomSignalSet.phi сама по себе абсолютна,
-// схлопывание тока происходит незаметно (величины на выходе RETOM и на входах
+// схлопывание тока происходит незаметно (величины на выходе РЕТОМ и на входах
 // ДУТ остаются верными), но ломает всё, что физически зависит от взаимного
 // разнесения токов по фазе: расчёт небаланса токов (Iunb), симметричные
 // составляющие и т.п. -- найдено вживую 10 октября 2026 (см.
@@ -23,18 +23,115 @@
 // складывает phi[k] с uPhi[k] сама -- вызывающему достаточно указать один и
 // тот же угол (например, 89,8281°) для всех трёх фаз, если нужен одинаковый
 // cosφ на каждой фазе, не вычисляя абсолютные углы вручную.
+//
+// ИСКЛЮЧИТЕЛЬНЫЙ ДОСТУП К ПОРТУ (добавлено 19 октября 2026, avm-tester):
+// до этой правки ничто не мешало двум запускам retomhold на один порт работать
+// одновременно -- ни один из них не получал чистой ошибки "порт занят", но оба
+// вместе создавали непредсказуемое поведение устройства (перепутанные кадры,
+// неверный ответ на команды вроде Sbg), которое выглядит как сбой самого ДУТа
+// или даже РЕТОМа, а на деле -- забытый фоновый процесс держит порт. Поймано
+// живьём: ручная диагностика оставила retomhold в фоне на 100с, а следующий
+// вызов из автоматического теста получил Sbg: Error response без видимой
+// причины -- `pgrep -af retomhold` нашёл висящий процесс, kill сразу всё
+// починил. Теперь: эксклюзивная блокировка файла `/tmp/retomhold-<port>.lock`
+// (flock, неблокирующая) берётся до открытия самого порта -- если занято,
+// программа сразу и понятно говорит, каким PID, вместо того чтобы дать второй
+// процесс тихо мешать первому.
+//
+// GRACEFUL SIGTERM (добавлено туда же): раньше единственный способ прервать
+// retomhold раньше заданного времени -- kill -9, который пропускает
+// driver.off()/disconnect() и может оставить РЕТОМ посреди выдачи. Теперь
+// обычный `kill` (SIGTERM) или Ctrl-C (SIGINT) прерывают ожидание и всё равно
+// проходят через штатное выключение перед выходом.
 #include "libavm-retom/driver.h"
 
 #include <QCoreApplication>
 #include <QThread>
+
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
+
+#include <fcntl.h>
+#include <sys/file.h>
+#include <unistd.h>
+
+namespace
+{
+volatile sig_atomic_t g_stopRequested = 0;
+
+void handleStopSignal(int)
+{
+    g_stopRequested = 1;
+}
+
+/// A filesystem-safe stand-in for a port path -- "/dev/ttyUSB4" becomes
+/// "_dev_ttyUSB4", good enough as a lock-file name, not meant to be unique
+/// beyond that.
+QString sanitizedForFilename(const QString &port)
+{
+    QString out = port;
+    for (QChar &c : out)
+    {
+        if (!c.isLetterOrNumber())
+            c = QLatin1Char('_');
+    }
+    return out;
+}
+
+/// Exclusive, non-blocking flock() on a lock file keyed by the port path, so
+/// a second retomhold on the SAME port fails loudly and immediately instead
+/// of silently contending with the first one. The returned fd must be kept
+/// open (not closed) for the lock's lifetime -- flock() releases
+/// automatically when the fd closes, including on process exit or crash, so
+/// there is nothing to clean up explicitly.
+int acquirePortLock(const QString &port)
+{
+    const QString lockPath = QStringLiteral("/tmp/retomhold-%1.lock").arg(sanitizedForFilename(port));
+    const int fd = ::open(lockPath.toLocal8Bit().constData(), O_CREAT | O_RDWR, 0666);
+    if (fd < 0)
+    {
+        std::fprintf(stderr, "ERROR: could not open lock file %s\n", lockPath.toLocal8Bit().constData());
+        return -1;
+    }
+    if (::flock(fd, LOCK_EX | LOCK_NB) != 0)
+    {
+        char heldBy[64] = {};
+        const ssize_t n = ::read(fd, heldBy, sizeof(heldBy) - 1);
+        std::fprintf(stderr,
+            "ERROR: port %s is already held by another retomhold (lock file %s%s%s) -- not opening it, to "
+            "avoid silently contending with whatever already has it. Find it with `pgrep -af retomhold` and "
+            "kill it (plain `kill`, not -9) if it's stale.\n",
+            port.toLocal8Bit().constData(), lockPath.toLocal8Bit().constData(), n > 0 ? ", pid=" : "",
+            n > 0 ? heldBy : "");
+        ::close(fd);
+        return -1;
+    }
+    // Record our own PID so a stuck lock is easy to diagnose by hand.
+    if (::ftruncate(fd, 0) == 0)
+    {
+        const QByteArray pidText = QByteArray::number(static_cast<qint64>(::getpid()));
+        if (::write(fd, pidText.constData(), pidText.size()) < 0)
+        { /* best-effort diagnostic only */
+        }
+    }
+    return fd;
+}
+} // namespace
 
 int main(int argc, char **argv)
 {
     QCoreApplication app(argc, argv);
     const QString port = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QStringLiteral("/dev/ttyUSB0");
     const int seconds = argc > 2 ? std::atoi(argv[2]) : 20;
+
+    const int lockFd = acquirePortLock(port);
+    if (lockFd < 0)
+        return 1;
+
+    std::signal(SIGTERM, handleStopSignal);
+    std::signal(SIGINT, handleStopSignal);
+
     retom::RetomConfig cfg;
     retom::RetomDriver driver(cfg, std::make_unique<retom::FtdiTransport>(retom::kRetomVid, retom::kRetomPid, port));
     try
@@ -73,10 +170,20 @@ int main(int argc, char **argv)
             std::printf("ZERO no signal applied\n");
             std::fflush(stdout);
         }
-        QThread::sleep(static_cast<unsigned long>(seconds));
+        // Sleep in short slices rather than one QThread::sleep(seconds), so
+        // a SIGTERM/SIGINT can break out promptly and still reach the
+        // graceful off()/disconnect() below instead of needing -9.
+        for (int waited = 0; waited < seconds && !g_stopRequested; ++waited)
+            QThread::sleep(1);
+        if (g_stopRequested)
+        {
+            std::printf("INTERRUPTED stopping early, still shutting down cleanly\n");
+            std::fflush(stdout);
+        }
         driver.off();
         driver.disconnect();
         std::printf("DONE output off, disconnected\n");
+        ::close(lockFd);
         return 0;
     }
     catch (const std::exception &e)
@@ -84,6 +191,7 @@ int main(int argc, char **argv)
         std::fprintf(stderr, "ERROR: %s\n", e.what());
         try { driver.safetyStop(); } catch (...) {}
         try { driver.disconnect(); } catch (...) {}
+        ::close(lockFd);
         return 1;
     }
 }
