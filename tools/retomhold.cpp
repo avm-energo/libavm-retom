@@ -3,6 +3,10 @@
 // Печатает "APPLY ..." сразу после apply(), чтобы вызывающий процесс мог дождаться именно
 // этого момента, а не гадать с фиксированной задержкой.
 //   retomhold <port> <seconds> [UA UB UC IA IB IC phiA phiB phiC freq uPhiA uPhiB uPhiC]
+//   ... uPhiA uPhiB uPhiC dCpct dTgdPct periodSec -- optional "wobble": slowly modulate each phase's
+//        current (C = I/(U*w), so dCpct is the +-amplitude of C in %) and tg_d (+-dTgdPct, in
+//        percentage points) sinusoidally around the given values, one full cycle per periodSec,
+//        phases of the three modulations offset by 120 deg. Re-applies every kWobbleStepSec.
 //   retomhold <port> check   -- one-shot voltage-output pre-flight check, see below
 // Без сигнальных аргументов подключается и включается, но ничего не подаёт -- нулевое
 // состояние. uPhi по умолчанию 0/-120/-240.
@@ -60,6 +64,8 @@
 #include <QCoreApplication>
 #include <QThread>
 
+#include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -178,6 +184,7 @@ int main(int argc, char **argv)
         driver.connect(true);
         std::printf("READY connected=%d enabled=%d\n", int(driver.isConnected()), int(driver.isEnabled()));
         std::fflush(stdout);
+        bool wobbled = false;
         if (argc >= 13)
         {
             retom::RetomSignalSet s;
@@ -203,6 +210,42 @@ int main(int argc, char **argv)
                 s.i[0], s.i[1], s.i[2], s.phi[0], s.phi[1], s.phi[2], s.freq);
             std::fflush(stdout);
             driver.apply(s);
+
+            if (argc >= 19)
+            {
+                // Wobble: the held values are the centre. delta = 90 - phi_rel, tg_d = tan(delta).
+                const double dCpct = std::atof(argv[16]);
+                const double dTgdPct = std::atof(argv[17]);
+                const double period = std::atof(argv[18]);
+                constexpr double kPi = 3.14159265358979323846;
+                constexpr int kWobbleStepSec = 3;
+                wobbled = true;
+                const retom::RetomSignalSet centre = s;
+                std::printf("WOBBLE C +-%.4g%%, tgd +-%.4g%%-pt, period %.4g s\n", dCpct, dTgdPct, period);
+                std::fflush(stdout);
+                const auto t0 = std::chrono::steady_clock::now();
+                for (int waited = 0; waited < seconds && !g_stopRequested; waited += kWobbleStepSec)
+                {
+                    for (int k = 0; k < kWobbleStepSec && !g_stopRequested; ++k)
+                        QThread::sleep(1);
+                    if (g_stopRequested)
+                        break;
+                    const double t = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+                    retom::RetomSignalSet w = centre;
+                    for (int k = 0; k < 3; ++k)
+                    {
+                        const double ang = 2 * kPi * t / period + k * 2 * kPi / 3;
+                        const double deltaRel = 90.0 - (centre.phi[k] - centre.uPhi[k]);
+                        const double tgd = std::tan(deltaRel * kPi / 180.0) + dTgdPct / 100.0 * std::sin(ang);
+                        w.i[k] = centre.i[k] * (1.0 + dCpct / 100.0 * std::sin(ang + kPi / 2));
+                        w.phi[k] = centre.uPhi[k] + 90.0 - std::atan(tgd) * 180.0 / kPi;
+                    }
+                    driver.apply(w);
+                    std::printf("t=%.0f I=%.4f/%.4f/%.4f phiRel=%.4f/%.4f/%.4f\n", t, w.i[0], w.i[1], w.i[2],
+                        w.phi[0] - w.uPhi[0], w.phi[1] - w.uPhi[1], w.phi[2] - w.uPhi[2]);
+                    std::fflush(stdout);
+                }
+            }
         }
         else
         {
@@ -212,7 +255,7 @@ int main(int argc, char **argv)
         // Sleep in short slices rather than one QThread::sleep(seconds), so
         // a SIGTERM/SIGINT can break out promptly and still reach the
         // graceful off()/disconnect() below instead of needing -9.
-        for (int waited = 0; waited < seconds && !g_stopRequested; ++waited)
+        for (int waited = 0; !wobbled && waited < seconds && !g_stopRequested; ++waited)
             QThread::sleep(1);
         if (g_stopRequested)
         {
