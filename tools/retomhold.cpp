@@ -8,6 +8,23 @@
 //        percentage points) sinusoidally around the given values, one full cycle per periodSec,
 //        phases of the three modulations offset by 120 deg. Re-applies every kWobbleStepSec.
 //   retomhold <port> check   -- one-shot voltage-output pre-flight check, see below
+//   retomhold <port> outcontact <number> <0|1> <seconds>  -- hold a discrete OUTPUT contact
+//        closed(1)/open(0) for <seconds>, then reset it open before disconnecting. For driving
+//        a DUT's own discrete input (e.g. AVM-KIV's DI24) from RETOM while something else reads
+//        the DUT over its own protocols meanwhile -- same "hold while another process reads"
+//        shape as the analog mode above, just for RetomDriver::setOutContact() instead of
+//        apply(). Added for Suite S5 (avm-tester), the transformer-off/DI24 discrete path.
+//   retomhold <port> incontacts  -- one-shot read of RetomDriver::readInputContacts()'s bitmask,
+//        printed both raw and bit-by-bit. For reading back a DUT's own relay outputs wired into
+//        RETOM's input contacts (see avm-tester's kiv-testing/stand.yml, discrete_wiring section,
+//        for this bench's specific relay-to-contact-number mapping).
+//   RETOMHOLD_OUTCONTACT=<number>:<0|1> (env var, any mode above the two one-shot ones) -- set a
+//        discrete OUTPUT contact for the SAME held duration as whatever analog signal this call
+//        is also applying, reset open before disconnecting. An env var rather than another
+//        positional arg, and deliberately part of the SAME process/hold as the analog signal,
+//        not a separate outcontact call -- RETOM's port lock means a separate call would force
+//        this one's analog signal off first, breaking an armed condition a caller (Suite S5's
+//        DI24 cases) needs to stay live while the discrete contact is toggled.
 // Без сигнальных аргументов подключается и включается, но ничего не подаёт -- нулевое
 // состояние. uPhi по умолчанию 0/-120/-240.
 //
@@ -142,7 +159,10 @@ int main(int argc, char **argv)
     QCoreApplication app(argc, argv);
     const QString port = argc > 1 ? QString::fromLocal8Bit(argv[1]) : QStringLiteral("/dev/ttyUSB0");
     const bool checkMode = argc > 2 && QString::fromLocal8Bit(argv[2]) == QLatin1String("check");
-    const int seconds = (argc > 2 && !checkMode) ? std::atoi(argv[2]) : 20;
+    const bool outContactMode = argc > 2 && QString::fromLocal8Bit(argv[2]) == QLatin1String("outcontact");
+    const bool inContactsMode = argc > 2 && QString::fromLocal8Bit(argv[2]) == QLatin1String("incontacts");
+    const bool specialMode = checkMode || outContactMode || inContactsMode;
+    const int seconds = (argc > 2 && !specialMode) ? std::atoi(argv[2]) : 20;
 
     const int lockFd = acquirePortLock(port);
     if (lockFd < 0)
@@ -179,11 +199,97 @@ int main(int argc, char **argv)
         }
     }
 
+    if (outContactMode)
+    {
+        if (argc < 6)
+        {
+            std::fprintf(stderr, "usage: retomhold <port> outcontact <number> <0|1> <seconds>\n");
+            ::close(lockFd);
+            return 2;
+        }
+        const int number = std::atoi(argv[3]);
+        const bool closed = std::atoi(argv[4]) != 0;
+        const int holdSeconds = std::atoi(argv[5]);
+        try
+        {
+            driver.connect(true);
+            std::printf("SET outcontact #%d -> %s, holding %ds\n", number, closed ? "closed" : "open",
+                holdSeconds);
+            std::fflush(stdout);
+            driver.setOutContact(number, closed);
+            for (int waited = 0; waited < holdSeconds && !g_stopRequested; ++waited)
+                QThread::sleep(1);
+            if (g_stopRequested)
+            {
+                std::printf("INTERRUPTED stopping early\n");
+                std::fflush(stdout);
+            }
+            driver.setOutContact(number, false);
+            driver.disconnect();
+            std::printf("DONE outcontact #%d reset open, disconnected\n", number);
+            ::close(lockFd);
+            return 0;
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "ERROR: %s\n", e.what());
+            try { driver.setOutContact(number, false); } catch (...) {}
+            try { driver.disconnect(); } catch (...) {}
+            ::close(lockFd);
+            return 1;
+        }
+    }
+
+    if (inContactsMode)
+    {
+        try
+        {
+            driver.connect(true);
+            const quint32 bits = driver.readInputContacts();
+            std::printf("INCONTACTS raw=0x%08x", bits);
+            for (int b = 0; b < 8; ++b)
+                std::printf(" #%d=%d", b, (bits >> b) & 1);
+            std::printf("\n");
+            driver.disconnect();
+            ::close(lockFd);
+            return 0;
+        }
+        catch (const std::exception &e)
+        {
+            std::fprintf(stderr, "ERROR: %s\n", e.what());
+            try { driver.disconnect(); } catch (...) {}
+            ::close(lockFd);
+            return 1;
+        }
+    }
+
     try
     {
         driver.connect(true);
         std::printf("READY connected=%d enabled=%d\n", int(driver.isConnected()), int(driver.isEnabled()));
         std::fflush(stdout);
+        // RETOMHOLD_OUTCONTACT=<number>:<0|1> -- set a discrete OUTPUT contact alongside
+        // whatever analog signal this same hold is applying, for the SAME held duration. An
+        // env var, not another positional arg, so it doesn't disturb the existing argument
+        // layout (already overloaded with wobble-mode). Needed because RETOM's own port lock
+        // means a *separate* retomhold outcontact call would force this process's analog
+        // signal off first -- some callers (Suite S5's DI24 cases) need an armed analog
+        // condition and a discrete output held at the same time, from the one process that
+        // actually owns the port.
+        int outContactNum = -1;
+        if (const char *spec = std::getenv("RETOMHOLD_OUTCONTACT"))
+        {
+            const QString s = QString::fromLocal8Bit(spec);
+            const int colon = s.indexOf(':');
+            if (colon > 0)
+            {
+                outContactNum = s.left(colon).toInt();
+                const bool closed = s.mid(colon + 1).toInt() != 0;
+                std::printf("OUTCONTACT #%d -> %s\n", outContactNum, closed ? "closed" : "open");
+                std::fflush(stdout);
+                driver.setOutContact(outContactNum, closed);
+            }
+        }
         bool wobbled = false;
         if (argc >= 13)
         {
@@ -262,6 +368,8 @@ int main(int argc, char **argv)
             std::printf("INTERRUPTED stopping early, still shutting down cleanly\n");
             std::fflush(stdout);
         }
+        if (outContactNum >= 0)
+            driver.setOutContact(outContactNum, false);
         driver.off();
         driver.disconnect();
         std::printf("DONE output off, disconnected\n");
