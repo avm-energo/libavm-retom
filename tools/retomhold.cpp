@@ -25,6 +25,15 @@
 //        not a separate outcontact call -- RETOM's port lock means a separate call would force
 //        this one's analog signal off first, breaking an armed condition a caller (Suite S5's
 //        DI24 cases) needs to stay live while the discrete contact is toggled.
+//   RETOMHOLD_READ_INCONTACTS=1 (env var, the plain analog-hold mode only) -- periodically (every
+//        2s) print the SAME "INCONTACTS raw=0x.." line the one-shot `incontacts` mode prints,
+//        for the SAME held duration as the analog signal. Same reasoning as OUTCONTACT above, the
+//        other direction: a caller needs to read the DUT's own relay *inputs* into RETOM while an
+//        armed analog condition stays live, and a separate `incontacts` call would otherwise be
+//        refused outright by the port lock (confirmed live, avm-tester Suite S8's kiv_s8_lowu_test
+//        -- "port already held by another retomhold"). Periodic, not one-shot-after-apply, because
+//        the DUT's own reaction to a signal step (and whatever it drives through this same digital
+//        path) needs real settle time, not just the signal itself being applied.
 // Без сигнальных аргументов подключается и включается, но ничего не подаёт -- нулевое
 // состояние. uPhi по умолчанию 0/-120/-240.
 //
@@ -290,6 +299,7 @@ int main(int argc, char **argv)
                 driver.setOutContact(outContactNum, closed);
             }
         }
+        const bool readIncontactsFlag = std::getenv("RETOMHOLD_READ_INCONTACTS") != nullptr;
         bool wobbled = false;
         if (argc >= 13)
         {
@@ -362,7 +372,18 @@ int main(int argc, char **argv)
         // a SIGTERM/SIGINT can break out promptly and still reach the
         // graceful off()/disconnect() below instead of needing -9.
         for (int waited = 0; !wobbled && waited < seconds && !g_stopRequested; ++waited)
+        {
             QThread::sleep(1);
+            if (readIncontactsFlag && waited % 2 == 0)
+            {
+                const quint32 bits = driver.readInputContacts();
+                std::printf("INCONTACTS raw=0x%08x", bits);
+                for (int b = 0; b < 8; ++b)
+                    std::printf(" #%d=%d", b, (bits >> b) & 1);
+                std::printf("\n");
+                std::fflush(stdout);
+            }
+        }
         if (g_stopRequested)
         {
             std::printf("INTERRUPTED stopping early, still shutting down cleanly\n");
