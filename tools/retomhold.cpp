@@ -34,6 +34,21 @@
 //        -- "port already held by another retomhold"). Periodic, not one-shot-after-apply, because
 //        the DUT's own reaction to a signal step (and whatever it drives through this same digital
 //        path) needs real settle time, not just the signal itself being applied.
+//   RETOMHOLD_STDIN_CONTROL=1 (env var, the plain analog-hold mode only) -- read lines from stdin
+//        for the whole held duration, each re-applying a NEW signal on the SAME connection without
+//        ever disconnecting: "APPLY u0 u1 u2 i0 i1 i2 phiRel0 phiRel1 phiRel2 freq" (phiRel is
+//        relative to each phase's own uPhi, same convention as the initial CLI apply; uPhi itself
+//        stays fixed at whatever the initial apply used). Added because the alternative --
+//        several separate retomhold invocations in sequence -- has a real gap between one
+//        process disconnecting and the next connecting, during which RETOM's output is
+//        genuinely off; a bare incontacts/alarm-state read taken in that gap is indistinguishable
+//        from a real stuck/latched state (confirmed live, avm-tester Suite S8's hardware-relay-
+//        latching investigation: NotU/NotI/LowU all read 1 on every phase simply because nothing
+//        was being driven at that instant, not because of any genuine fault). One continuous hold
+//        with mid-hold signal changes removes that gap entirely. Lines are read on a background
+//        thread and applied from the main loop's existing per-second tick, so this needs no other
+//        structural change. Each successful apply prints "APPLIED ..." (distinct from the initial
+//        "APPLY" line) so the caller can wait for exactly that moment instead of guessing a delay.
 // Без сигнальных аргументов подключается и включается, но ничего не подаёт -- нулевое
 // состояние. uPhi по умолчанию 0/-120/-240.
 //
@@ -95,6 +110,12 @@
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
+#include <iostream>
+#include <mutex>
+#include <queue>
+#include <sstream>
+#include <string>
+#include <thread>
 
 #include <fcntl.h>
 #include <sys/file.h>
@@ -107,6 +128,49 @@ volatile sig_atomic_t g_stopRequested = 0;
 void handleStopSignal(int)
 {
     g_stopRequested = 1;
+}
+
+// RETOMHOLD_STDIN_CONTROL=1 support: a background thread does the
+// blocking std::getline() reads so the main per-second tick (which also
+// handles SIGTERM/SIGINT promptly) never blocks on stdin. Lines land in
+// this queue; the main loop drains it once per tick.
+std::mutex g_stdinMutex;
+std::queue<std::string> g_stdinLines;
+
+void stdinReaderThread()
+{
+    std::string line;
+    while (std::getline(std::cin, line))
+    {
+        std::lock_guard<std::mutex> lock(g_stdinMutex);
+        g_stdinLines.push(line);
+    }
+}
+
+/// Parses "APPLY u0 u1 u2 i0 i1 i2 phiRel0 phiRel1 phiRel2 freq" (the same
+/// field order/convention as the initial CLI apply, uPhi held fixed from
+/// outside). Returns false (and leaves out untouched) if the line isn't a
+/// well-formed APPLY line, so the caller can skip anything else without
+/// treating it as fatal.
+bool parseApplyLine(const std::string &line, const double uPhi[3], retom::RetomSignalSet &out)
+{
+    std::istringstream iss(line);
+    std::string tag;
+    iss >> tag;
+    if (tag != "APPLY")
+        return false;
+    double u[3], i[3], phiRel[3], freq;
+    if (!(iss >> u[0] >> u[1] >> u[2] >> i[0] >> i[1] >> i[2] >> phiRel[0] >> phiRel[1] >> phiRel[2] >> freq))
+        return false;
+    for (int k = 0; k < 3; ++k)
+    {
+        out.u[k] = u[k];
+        out.i[k] = i[k];
+        out.uPhi[k] = uPhi[k];
+        out.phi[k] = uPhi[k] + phiRel[k];
+    }
+    out.freq = freq;
+    return true;
 }
 
 /// A filesystem-safe stand-in for a port path -- "/dev/ttyUSB4" becomes
@@ -300,6 +364,22 @@ int main(int argc, char **argv)
             }
         }
         const bool readIncontactsFlag = std::getenv("RETOMHOLD_READ_INCONTACTS") != nullptr;
+        const bool stdinControlFlag = std::getenv("RETOMHOLD_STDIN_CONTROL") != nullptr;
+        if (stdinControlFlag)
+        {
+            // Detached immediately, not kept joinable: it blocks on
+            // std::getline() until stdin closes, so joining could hang,
+            // and a joinable std::thread whose destructor runs during
+            // exception unwinding (e.g. driver.apply() throwing later in
+            // this same try block) would call std::terminate() instead
+            // of reaching the catch block below. Detaching up front makes
+            // this thread's lifetime independent of the rest of main().
+            std::thread(stdinReaderThread).detach();
+        }
+        // uPhi stays fixed for the whole hold, including any later
+        // RETOMHOLD_STDIN_CONTROL re-applies -- declared here, outside the
+        // argc>=13 block, so the sleep loop below can still see it.
+        double uPhi[3] = { 0.0, -120.0, -240.0 };
         bool wobbled = false;
         if (argc >= 13)
         {
@@ -308,10 +388,10 @@ int main(int argc, char **argv)
             // RetomSignalSet's own {0,0,0} -- the common case, and the only
             // way the per-phase-relative phi[] below means what it says
             // unless the caller overrides uPhi explicitly.
-            s.uPhi = { 0.0, -120.0, -240.0 };
             if (argc >= 16)
                 for (int k = 0; k < 3; ++k)
-                    s.uPhi[k] = std::atof(argv[13 + k]);
+                    uPhi[k] = std::atof(argv[13 + k]);
+            s.uPhi = { uPhi[0], uPhi[1], uPhi[2] };
             for (int k = 0; k < 3; ++k)
             {
                 s.u[k] = std::atof(argv[3 + k]);
@@ -374,6 +454,32 @@ int main(int argc, char **argv)
         for (int waited = 0; !wobbled && waited < seconds && !g_stopRequested; ++waited)
         {
             QThread::sleep(1);
+            if (stdinControlFlag)
+            {
+                std::queue<std::string> pending;
+                {
+                    std::lock_guard<std::mutex> lock(g_stdinMutex);
+                    std::swap(pending, g_stdinLines);
+                }
+                while (!pending.empty())
+                {
+                    retom::RetomSignalSet s;
+                    if (parseApplyLine(pending.front(), uPhi, s))
+                    {
+                        driver.apply(s);
+                        std::printf(
+                            "APPLIED U=%.4g/%.4g/%.4g I=%.4g/%.4g/%.4g phi=%.4g/%.4g/%.4g f=%.4g\n", s.u[0],
+                            s.u[1], s.u[2], s.i[0], s.i[1], s.i[2], s.phi[0], s.phi[1], s.phi[2], s.freq);
+                        std::fflush(stdout);
+                    }
+                    else
+                    {
+                        std::fprintf(stderr, "WARN: ignoring malformed stdin line: %s\n", pending.front().c_str());
+                        std::fflush(stderr);
+                    }
+                    pending.pop();
+                }
+            }
             if (readIncontactsFlag && waited % 2 == 0)
             {
                 const quint32 bits = driver.readInputContacts();
