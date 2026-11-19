@@ -455,7 +455,9 @@ std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, do
             {
                 const int remainingMs = static_cast<int>(timeout * 1000 - timer.elapsed());
                 const QByteArray chunk = transport_->read(128, std::min(remainingMs, 200));
-                if (chunk.isEmpty())
+                // Уже буферизованный остаток (напр. настоящий ответ, пришедший одним куском с
+                // пропущенным кадром-событием) разбираем и без новых байт.
+                if (chunk.isEmpty() && buf.isEmpty())
                 {
                     continue;
                 }
@@ -474,6 +476,18 @@ std::pair<quint16, QByteArray> RetomDriver::transact(const QByteArray &frame, do
                 try
                 {
                     const auto result = framing::unpackFrame(buf.mid(start, end - start + 1));
+                    if (result.first == protocol::CMD_EVENT_UNSOLICITED)
+                    {
+                        // Асинхронное событие прибора (см. protocol.h), не ответ на наш кадр: пропускаем и
+                        // ждём настоящий ответ -- иначе он принимался за ответ (напр. на ReadInputContacts
+                        // -> "ожидалось 4 байта") либо сдвигал все последующие ответы на один кадр.
+                        if (debug)
+                        {
+                            std::fprintf(stderr, "[%9.3f] RX event %#x skipped\n", debugElapsedMs(), result.first);
+                        }
+                        buf = buf.mid(end + 1);
+                        continue;
+                    }
                     if (debug)
                     {
                         std::fprintf(stderr, "[%9.3f] RX num=%#x payload=%s\n", debugElapsedMs(), result.first,

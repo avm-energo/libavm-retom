@@ -46,6 +46,15 @@ public:
             pendingRead_ += framing::packFrame(num, statusReply_); // ответ на запрос флага готовности
             return frame.size();
         }
+        if (num == protocol::CMD_READ_INPUT_CONTACTS)
+        {
+            if (injectEventBeforeInputsReply_)
+            {
+                pendingRead_ += framing::packFrame(protocol::CMD_EVENT_UNSOLICITED, QByteArray(46, '\0'));
+            }
+            pendingRead_ += framing::packFrame(num, inputsReply_);
+            return frame.size();
+        }
         pendingRead_ += framing::packFrame(num, QByteArray(1, '\x01'));
         return frame.size();
     }
@@ -59,6 +68,8 @@ public:
 
     // 12 байт: флаг готовности каскада напряжения -- байт 11 (см. RetomDriver::voltageStageReady()).
     QByteArray statusReply_ = QByteArray::fromHex("010101000000000300000001");
+    QByteArray inputsReply_ = QByteArray::fromHex("05000000");
+    bool injectEventBeforeInputsReply_ = false;
     bool opened_ = false;
     QByteArray pendingRead_;
     std::vector<QByteArray> writtenFrames_;
@@ -105,6 +116,20 @@ private slots:
         QVERIFY_THROWS_NO_EXCEPTION(driver.disconnect());
         QVERIFY(!driver.isConnected());
         QVERIFY(!driver.isEnabled());
+    }
+
+    // Живой прибор шлёт неинициированный кадр 0x402 (событие контактов) в произвольный момент, в т.ч.
+    // между запросом и его ответом (2026-11-19) -- transact() должен его пропустить, а не принять за ответ.
+    void unsolicitedEventFrameIsSkipped()
+    {
+        auto fake = std::make_unique<FakeTransport>();
+        fake->injectEventBeforeInputsReply_ = true;
+        RetomConfig cfg;
+        cfg.timeoutS = 0.5;
+        RetomDriver driver(cfg, std::move(fake));
+        driver.connect(false);
+        QCOMPARE(driver.readInputContacts(), quint32(5));
+        driver.disconnect();
     }
 
     void guardsRejectUseBeforeConnect()

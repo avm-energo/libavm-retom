@@ -28,6 +28,10 @@ constexpr quint16 CMD_READ_INPUT_CONTACTS = 0x902;
 constexpr quint16 CMD_SET_OUT_CONTACT_MINI = 0x806;
 constexpr quint16 CMD_SET_OUT_CONTACT_880 = 0x880;
 constexpr quint16 CMD_DISABLE = 0x812;
+// Неинициированный прибором кадр-событие (46 Б нагрузки, нули + флаг в первом байте). Замечен живьём
+// 2026-11-19: приходит при старте и при первых переключениях входных контактов, в произвольный момент --
+// в том числе между запросом и его ответом. Не является ответом ни на один запрос.
+constexpr quint16 CMD_EVENT_UNSOLICITED = 0x402;
 
 constexpr double kSqrt2 = 1.4142135623730951; // RMS -> амплитуда (пик)
 
