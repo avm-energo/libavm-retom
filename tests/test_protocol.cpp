@@ -86,6 +86,21 @@ private slots:
         QCOMPARE(num1, protocol::CMD_SET_OUT_CONTACT_880);
         QCOMPARE(payload1, QByteArray::fromHex("11010000"));
     }
+
+    void setOutContactNumberGoesIntoMini()
+    {
+        // Confirmed on hardware 2026-11-19: contacts 1..3 take the number in MINI byte 6, no 0x880 frame.
+        for (int n = 1; n <= 3; ++n)
+        {
+            const auto frames = protocol::encodeSetOutContact(true, n);
+            QCOMPARE(frames.size(), 1);
+            const auto [num, payload] = framing::unpackFrame(frames[0]);
+            QCOMPARE(num, protocol::CMD_SET_OUT_CONTACT_MINI);
+            QCOMPARE(payload, QByteArray::fromHex("4d494e490500") + QByteArray(1, char(n)) + QByteArray::fromHex("01"));
+        }
+        const auto open = protocol::encodeSetOutContact(false, 2);
+        QCOMPARE(framing::unpackFrame(open[0]).second, QByteArray::fromHex("4d494e4905000200"));
+    }
 };
 
 QTEST_APPLESS_MAIN(TestProtocol)

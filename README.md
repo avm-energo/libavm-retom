@@ -11,7 +11,8 @@ confirmed (or still open) against real hardware.
 
 The API surface implements exactly the subset confirmed by live USB
 captures so far: `connect`/`disconnect`, `enable`/`disable`,
-`apply`/`off`/`safetyStop`, `readInputContacts`, `setOutContact`. Higher-level
+`apply`/`off`/`safetyStop`, `readInputContacts`, `setOutContact` (contacts 0-3,
+confirmed with a voltmeter on 2026-11-19). Higher-level
 RTDI functionality (e.g. `ServerInfo`) is not implemented - its command
 numbers are not yet confirmed; see `linretom`'s `PLAN.md` "Phase F" for
 what remains.

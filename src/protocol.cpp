@@ -173,22 +173,32 @@ quint32 decodeInputContacts(const QByteArray &payload)
 
 std::vector<QByteArray> encodeSetOutContact(bool closed, int number)
 {
-    Q_UNUSED(number); // подтверждено живым захватом ТОЛЬКО для number=0, см. protocol.py
+    // Подтверждено на живом приборе (2026-11-19, вольтметр на всех четырёх контактах):
+    //  - номер контакта -- третий байт MINI-кадра: "MINI" 05 00 <number> <flag>. Для number=1,2,3
+    //    замыкается именно этот контакт (раньше номер игнорировался, и любой запрос замыкал контакт 0).
+    //  - контакт 0 одним MINI-кадром (05 00 00 flag) НЕ управляется -- им управляет сопровождающий
+    //    кадр 0x880: [0x10|flag, 01, 00, 00] (хвост 0x11 сам замыкает контакт 0 при любом номере в MINI).
+    //  Поэтому для number == 0 шлются оба кадра (как раньше), для number >= 1 -- только MINI, чтобы
+    //    не трогать состояние контакта 0.
     const quint8 flag = closed ? 1 : 0;
 
     QByteArray mini("MINI", 4);
     mini.append(static_cast<char>(0x05));
     mini.append(static_cast<char>(0));
-    mini.append(static_cast<char>(0));
+    mini.append(static_cast<char>(number));
     mini.append(static_cast<char>(flag));
 
-    QByteArray tail;
-    tail.append(static_cast<char>(closed ? 0x11 : 0x10));
-    tail.append(static_cast<char>(0x01));
-    tail.append(static_cast<char>(0));
-    tail.append(static_cast<char>(0));
-
-    return { framing::packFrame(CMD_SET_OUT_CONTACT_MINI, mini), framing::packFrame(CMD_SET_OUT_CONTACT_880, tail) };
+    std::vector<QByteArray> frames { framing::packFrame(CMD_SET_OUT_CONTACT_MINI, mini) };
+    if (number == 0)
+    {
+        QByteArray tail;
+        tail.append(static_cast<char>(closed ? 0x11 : 0x10));
+        tail.append(static_cast<char>(0x01));
+        tail.append(static_cast<char>(0));
+        tail.append(static_cast<char>(0));
+        frames.push_back(framing::packFrame(CMD_SET_OUT_CONTACT_880, tail));
+    }
+    return frames;
 }
 
 QByteArray encodeDisable()
