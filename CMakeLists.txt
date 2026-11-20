@@ -98,15 +98,18 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 set(PROJECT_INSTALL_CMAKEDIR "${CMAKE_INSTALL_LIBDIR}/cmake/${PROJECT_NAME}"
     CACHE STRING "Path to ${PROJECT_NAME} CMake files")
 
+# Components: "runtime" (the shared library) and "devel" (static lib, headers, CMake package files, .so symlink)
+# - used by CPack to split libX / libX-dev(el) packages; a plain `cmake --install` still installs everything.
 install(TARGETS ${PROJECT_NAME}
         EXPORT ${PROJECT_NAME}_Targets
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT devel
+        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR} COMPONENT runtime NAMELINK_COMPONENT devel
+        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR} COMPONENT runtime)
 
 # --- Copying public headers with the directory structure ---
 install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/" # source directory
         DESTINATION ${CMAKE_INSTALL_INCLUDEDIR} # target directory (source included ${PROJECT_NAME} already)
+        COMPONENT devel
         FILES_MATCHING # install only matched files
         PATTERN "*.h" # select header files
 )
@@ -125,11 +128,11 @@ configure_package_config_file(
 install(EXPORT ${PROJECT_NAME}_Targets
         FILE ${PROJECT_NAME}Targets.cmake
         NAMESPACE ${PROJECT_NAME}::
-        DESTINATION ${PROJECT_INSTALL_CMAKEDIR})
+        DESTINATION ${PROJECT_INSTALL_CMAKEDIR} COMPONENT devel)
 
 install(FILES "${PROJECT_BINARY_DIR}/${PROJECT_NAME}Config.cmake"
         "${PROJECT_BINARY_DIR}/${PROJECT_NAME}ConfigVersion.cmake"
-        DESTINATION ${PROJECT_INSTALL_CMAKEDIR})
+        DESTINATION ${PROJECT_INSTALL_CMAKEDIR} COMPONENT devel)
 
 set(VERSION_IN ${CMAKE_CURRENT_SOURCE_DIR}/VERSION.in)
 set(VERSION_OUT ${CMAKE_CURRENT_SOURCE_DIR}/package/src/VERSION)
@@ -150,4 +153,31 @@ if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
     add_subdirectory(examples)
   endif()
   add_subdirectory(tools)
+endif()
+
+# --- Packaging (CPack, used by .gitlab-ci.yml): libavm-retom + libavm-retom-dev (.deb) / libavm-retom-devel (.rpm) ---
+# Only for the top-level project, so FetchContent consumers don't get it. Configure with -DBUILD_SHARED_LIBS=ON.
+if(CMAKE_CURRENT_SOURCE_DIR STREQUAL CMAKE_SOURCE_DIR)
+  set(AVM_LIB_VERSION "${PROJECT_VERSION}" CACHE STRING "Version stamped on the packages")
+  set(CPACK_PACKAGE_NAME "${PROJECT_NAME}")
+  set(CPACK_PACKAGE_VERSION "${AVM_LIB_VERSION}")
+  set(CPACK_PACKAGE_VENDOR "AVM-Energo LLC")
+  set(CPACK_PACKAGE_CONTACT "AVM-Energo LLC <support@avmenergo.ru>")
+  set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "${PROJECT_DESCRIPTION}")
+  set(CPACK_PACKAGE_HOMEPAGE_URL "https://git.avmenergo.ru/avm-energo/${PROJECT_NAME}")
+  set(CPACK_COMPONENTS_ALL runtime devel)
+  set(CPACK_DEB_COMPONENT_INSTALL ON)
+  set(CPACK_RPM_COMPONENT_INSTALL ON)
+  set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
+  set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+  set(CPACK_DEBIAN_RUNTIME_PACKAGE_NAME "${PROJECT_NAME}")
+  set(CPACK_DEBIAN_DEVEL_PACKAGE_NAME "${PROJECT_NAME}-dev")
+  set(CPACK_DEBIAN_RUNTIME_PACKAGE_SHLIBDEPS ON)
+  set(CPACK_DEBIAN_DEVEL_PACKAGE_DEPENDS "${PROJECT_NAME} (= ${AVM_LIB_VERSION})")
+  set(CPACK_RPM_RUNTIME_PACKAGE_NAME "${PROJECT_NAME}")
+  set(CPACK_RPM_DEVEL_PACKAGE_NAME "${PROJECT_NAME}-devel")
+  set(CPACK_RPM_DEVEL_PACKAGE_REQUIRES "${PROJECT_NAME} = ${AVM_LIB_VERSION}")
+  set(CPACK_RPM_PACKAGE_LICENSE "GPLv3")
+  set(CPACK_RPM_PACKAGE_GROUP "System Environment/Libraries")
+  include(CPack)
 endif()

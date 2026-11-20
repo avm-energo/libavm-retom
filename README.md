@@ -1,21 +1,19 @@
 # libavm-retom
 
-Driver library for the РЕТОМ-51 relay test-bench device, for AVM-Energo
-projects. Talks to the device over its FTDI virtual COM port (`QSerialPort`,
-VID/PID `0403:6001`) using a reverse-engineered framing/command protocol -
-this project has no vendor documentation to work from, only Windows
-USB captures of the vendor's own `RTDI.exe`/`RTDI.DualServer` COM server.
-See the sibling `linretom` repository's `docs/RE_LOG.md` and `PLAN.md` for
-the full reverse-engineering history, including every protocol detail
-confirmed (or still open) against real hardware.
+[![pipeline status](https://git.avmenergo.ru/avm-energo/libavm-retom/badges/master/pipeline.svg)](https://git.avmenergo.ru/avm-energo/libavm-retom/-/pipelines)
+[![latest release](https://git.avmenergo.ru/avm-energo/libavm-retom/-/badges/release.svg)](https://git.avmenergo.ru/avm-energo/libavm-retom/-/releases)
 
-The API surface implements exactly the subset confirmed by live USB
-captures so far: `connect`/`disconnect`, `enable`/`disable`,
-`apply`/`off`/`safetyStop`, `readInputContacts`, `setOutContact` (contacts 0-3,
-confirmed with a voltmeter on 2026-11-19). Higher-level
-RTDI functionality (e.g. `ServerInfo`) is not implemented - its command
-numbers are not yet confirmed; see `linretom`'s `PLAN.md` "Phase F" for
-what remains.
+Русская версия: [README-ru.md](README-ru.md)
+
+**libavm-retom** is a driver library for **РЕТОМ-51** (RETOM-51) relay test-bench devices made by NPP Dinamika (<https://dynamics.com.ru/>), for AVM-Energo projects. Its GUI client is [avm-retom](https://git.avmenergo.ru/avm-energo/avm-retom).
+
+This software was made by AVM-Energo LLC with the help of Claude.
+
+The library talks to the device over its FTDI virtual COM port (`QSerialPort`,
+VID/PID `0403:6001`).
+
+The API surface implements exactly the subset so far: `connect`/`disconnect`, `enable`/`disable`,
+`apply`/`off`/`safetyStop`, `readInputContacts`, `setOutContact`.
 
 # Requires
 
@@ -83,21 +81,16 @@ See `tools/live_smoke_test.cpp` for a complete, runnable program that
 exercises the full connect/apply/off/setOutContact/disconnect lifecycle
 against real hardware.
 
-# Known limitations
-
-- `Lock` frames (device capture/release, sent on `connect()`/`disconnect()`/
-  internally by `enable()`) never receive a response from the device -
-  confirmed against both the vendor's RTDI and a second vendor software
-  package, across an entire live session including real analog output
-  cycles. This is expected device behavior, not a bug - `connect()`
-  deliberately does not wait for one.
-- Only the command subset listed above has been ported/verified; the rest
-  of the RTDI COM API (`ServerInfo`, hardware output modes like
-  `OutSteps`/`OutSeq`, harmonics) remains unreversed. See the `linretom`
-  repository's `PLAN.md` for the current state and next steps.
-
 # Packaging
 
-`package/` holds Debian (`debian`/`debian-dev`) and RPM (`rpm/rpmbuild`)
-packaging sources, matching the convention used across AVM-Energo's other
-C++ libraries (see `libavm-gen`, `libavm-emon`).
+Linux packages are built by CI (`.gitlab-ci.yml`) with CPack: `libavm-retom` (runtime, the shared library) and
+`libavm-retom-dev` (`.deb`) / `libavm-retom-devel` (`.rpm`) (static library, headers, CMake package files). To build them
+locally:
+
+```bash
+$ cmake -B build -S . -DBUILD_SHARED_LIBS=ON -DCMAKE_INSTALL_PREFIX=/usr
+$ cmake --build build
+$ cd build && cpack -G DEB   # or -G RPM
+```
+
+Packages of every tagged version are listed on the [Releases page](https://git.avmenergo.ru/avm-energo/libavm-retom/-/releases).

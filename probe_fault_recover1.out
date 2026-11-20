@@ -1,5 +1,0 @@
-recover: after connect(false)                     flag=?
-recover: after enable()                           flag=0
-recover: after disable()+enable()                 flag=0
-recover: after disconnect, 5s, connect(true)      flag=0
-recover: after disable, 10s idle, enable          flag=0

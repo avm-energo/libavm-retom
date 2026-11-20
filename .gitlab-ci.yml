@@ -1,5 +1,7 @@
 stages:
   - build
+  - package
+  - release
 
 # Uses the pre-baked images from the dockers repo (dockers/gitlab-ci/) -
 # see that repo for what's installed in each (Qt6 base+svg, git,
@@ -51,3 +53,93 @@ build:windows-mingw:
     - cmake -B build-shared -S . -DSYSTEM_NAME=windows -DBUILD_SHARED_LIBS=ON
         -DCMAKE_TOOLCHAIN_FILE="$QT_MINGW_TOOLCHAIN" -DQT_HOST_PATH=/usr
     - cmake --build build-shared -j"$(nproc)"
+
+# --- Packaging & releases -------------------------------------------------------------------------------------
+# Version: tag vX.Y.Z -> X.Y.Z; any other build -> <project version>.<pipeline iid> (e.g. 1.0.0.47), which both
+# dpkg and rpm accept and which sorts after the base version.
+# pull_policy "always": the runner's default keeps serving a stale local copy after an image is rebuilt under the
+# same tag; this only costs a digest check when nothing changed.
+.version: &version
+  - |
+    if [ -n "$CI_COMMIT_TAG" ]; then
+      BUILD_VERSION="${CI_COMMIT_TAG#v}"
+    else
+      BUILD_VERSION="$(sed -n 's/^ *VERSION \([0-9.]*\))\{0,1\}$/\1/p' CMakeLists.txt | head -1).$CI_PIPELINE_IID"
+    fi
+    echo "version: $BUILD_VERSION"
+
+package:deb:
+  stage: package
+  image:
+    name: vm-debci:5000/debian-trixie-qt6:latest
+    pull_policy: always
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+  script:
+    - *version
+    - command -v dpkg-shlibdeps >/dev/null || (apt-get update -qq && apt-get install -y -qq dpkg-dev)
+    - cmake -S . -B build-pkg -DSYSTEM_NAME=linux -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DAVM_LIB_VERSION="$BUILD_VERSION"
+    - cmake --build build-pkg -j"$(nproc)"
+    - cpack --config build-pkg/CPackConfig.cmake -G DEB -B dist
+  artifacts:
+    name: "libavm-retom-deb-$CI_COMMIT_REF_SLUG"
+    paths:
+      - dist/*.deb
+    expire_in: 30 days
+
+package:rpm:
+  stage: package
+  image:
+    name: vm-debci:5000/fedora-qt6:latest
+    pull_policy: always
+  rules:
+    - if: '$CI_COMMIT_BRANCH || $CI_COMMIT_TAG'
+  script:
+    - grep PRETTY_NAME /etc/os-release
+    - *version
+    - command -v rpmbuild >/dev/null || dnf install -y -q rpm-build
+    - cmake -S . -B build-pkg -DSYSTEM_NAME=linux -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DAVM_LIB_VERSION="$BUILD_VERSION"
+    - cmake --build build-pkg -j"$(nproc)"
+    - cpack --config build-pkg/CPackConfig.cmake -G RPM -B dist
+  artifacts:
+    name: "libavm-retom-rpm-$CI_COMMIT_REF_SLUG"
+    paths:
+      - dist/*.rpm
+    expire_in: 30 days
+
+# On a version tag: upload the .deb/.rpm packages (runtime + development) to the project's Generic Package
+# Registry (permanent, unlike job artifacts) and create a Release linking to them. Plain curl with the job token.
+release:
+  stage: release
+  image:
+    name: vm-debci:5000/debian-trixie-qt6:latest
+    pull_policy: always
+  rules:
+    - if: '$CI_COMMIT_TAG =~ /^v\d+\.\d+\.\d+$/'
+  needs:
+    - job: package:deb
+      artifacts: true
+    - job: package:rpm
+      artifacts: true
+  cache: []
+  script:
+    - command -v curl >/dev/null || (apt-get update -qq && apt-get install -y -qq curl)
+    - VERSION="${CI_COMMIT_TAG#v}"
+    - PKG="$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/libavm-retom/$VERSION"
+    - LINKS=""
+    - |
+      for f in dist/*; do
+        n="$(basename "$f")"
+        curl --fail-with-body -sS -H "JOB-TOKEN: $CI_JOB_TOKEN" --upload-file "$f" "$PKG/$n"
+        LINKS="$LINKS{ \"name\": \"$n\", \"url\": \"$PKG/$n\", \"link_type\": \"package\" },"
+      done
+    - |
+      cat > release.json <<JSON
+      {
+        "name": "libavm-retom $CI_COMMIT_TAG",
+        "tag_name": "$CI_COMMIT_TAG",
+        "description": "Linux .deb and .rpm packages (runtime and development) built from $CI_COMMIT_SHORT_SHA (pipeline #$CI_PIPELINE_IID).",
+        "assets": { "links": [ ${LINKS%,} ] }
+      }
+      JSON
+    - 'curl --fail-with-body -sS -X POST -H "JOB-TOKEN: $CI_JOB_TOKEN" -H "Content-Type: application/json" --data @release.json "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases"'
