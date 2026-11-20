@@ -17,14 +17,14 @@ stages:
 
 build:linux-debian:
   stage: build
-  image: vm-debian:5000/debian-qt6:latest
+  image: vm-debci:5000/debian-trixie-qt6:latest
   script:
     - cmake -B build -S . -DSYSTEM_NAME=linux
     - cmake --build build -j"$(nproc)"
 
 build:linux-fedora:
   stage: build
-  image: vm-debian:5000/fedora-qt6:latest
+  image: vm-debci:5000/fedora-qt6:latest
   script:
     - cmake -B build -S . -DSYSTEM_NAME=linux
     - cmake --build build -j"$(nproc)"
@@ -43,7 +43,7 @@ build:linux-fedora:
 # path - flagging that gap here too.
 build:windows-mingw:
   stage: build
-  image: vm-debian:5000/fedora-mingw-qt6:latest
+  image: vm-debci:5000/fedora-mingw-qt6:latest
   script:
     # Static
     - cmake -B build-static -S . -DSYSTEM_NAME=windows
